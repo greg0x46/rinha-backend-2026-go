@@ -27,7 +27,7 @@ services:
       resources:
         limits:
           cpus: "0.475"
-          memory: "160MB"
+          memory: "128MB"
 
   api2:
     build:
@@ -41,4 +41,4 @@ services:
       resources:
         limits:
           cpus: "0.475"
-          memory: "160MB"
+          memory: "128MB"

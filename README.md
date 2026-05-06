@@ -30,6 +30,13 @@ Gerar o indice binario local:
 go run ./cmd/preprocess
 ```
 
+O formato padrao e quantizado `int16`. Para gerar o baseline antigo em
+`float32`, use:
+
+```sh
+go run ./cmd/preprocess -format float32 -output data/references.float32.bin
+```
+
 O dataset oficial compactado fica versionado em `data/references.json.gz`.
 O preprocessamento gera `data/references.bin`, que e ignorado pelo Git.
 O build Docker tambem gera esse binario automaticamente dentro da imagem.

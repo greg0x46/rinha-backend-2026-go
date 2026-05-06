@@ -33,6 +33,32 @@ func TestLoadReferences(t *testing.T) {
 	}
 }
 
+func TestLoadScorerUsesQuantizedBinary(t *testing.T) {
+	path := writeTestQuantizedBinaryReferences(t, []Reference{
+		{Vector: Vector{0: 0.00}, Label: LabelFraud},
+		{Vector: Vector{0: 0.01}, Label: LabelFraud},
+		{Vector: Vector{0: 0.02}, Label: LabelFraud},
+		{Vector: Vector{0: 0.03}, Label: LabelLegit},
+		{Vector: Vector{0: 0.04}, Label: LabelLegit},
+	})
+
+	scorer, err := LoadScorer(path)
+	if err != nil {
+		t.Fatalf("LoadScorer failed: %v", err)
+	}
+	if !scorer.quantized {
+		t.Fatal("LoadScorer loaded float32 scorer, want quantized")
+	}
+
+	response := scorer.Score(Vector{})
+	if response.FraudScore != 0.6 {
+		t.Fatalf("FraudScore = %v, want 0.6", response.FraudScore)
+	}
+	if response.Approved {
+		t.Fatal("Approved = true, want false")
+	}
+}
+
 func TestSquaredDistance(t *testing.T) {
 	a := Vector{0: 1, 1: 2, 2: -1}
 	b := Vector{0: 4, 1: 6, 2: -1}
@@ -60,6 +86,42 @@ func TestScorerReturnsFiveNearestNeighbors(t *testing.T) {
 	}
 	if response.Approved {
 		t.Fatal("Approved = true, want false")
+	}
+}
+
+func TestQuantizedScorerMatchesFloatDecision(t *testing.T) {
+	references := []Reference{
+		{Vector: Vector{0: 0.00, 1: -1}, Label: LabelFraud},
+		{Vector: Vector{0: 0.01, 1: -1}, Label: LabelFraud},
+		{Vector: Vector{0: 0.02, 1: -1}, Label: LabelLegit},
+		{Vector: Vector{0: 0.03, 1: -1}, Label: LabelLegit},
+		{Vector: Vector{0: 0.04, 1: -1}, Label: LabelFraud},
+		{Vector: Vector{0: 0.90, 1: 1}, Label: LabelFraud},
+	}
+	index := fraudindex.QuantizedIndex{
+		Vectors: make([]fraudindex.QuantizedVector, len(references)),
+		Labels:  make([]fraudindex.Label, len(references)),
+	}
+	for i, reference := range references {
+		index.Vectors[i] = fraudindex.QuantizeVector(reference.Vector)
+		index.Labels[i] = reference.Label
+	}
+
+	query := Vector{0: 0.015, 1: -1}
+	floatResponse := NewScorer(references).Score(query)
+	quantizedResponse := NewQuantizedScorer(index).Score(query)
+
+	if quantizedResponse != floatResponse {
+		t.Fatalf("quantized response = %#v, want %#v", quantizedResponse, floatResponse)
+	}
+}
+
+func TestSquaredQuantizedDistance(t *testing.T) {
+	a := fraudindex.QuantizedVector{0: 32767, 1: -32767}
+	b := fraudindex.QuantizedVector{0: -32767, 1: 32767}
+
+	if got := squaredQuantizedDistance(a, b); got != 8_589_410_312 {
+		t.Fatalf("squaredQuantizedDistance = %v, want 8589410312", got)
 	}
 }
 
@@ -110,6 +172,24 @@ func writeTestBinaryReferences(t *testing.T, references []Reference) string {
 	writer, err := fraudindex.CreateBinary(path)
 	if err != nil {
 		t.Fatalf("CreateBinary failed: %v", err)
+	}
+	for _, reference := range references {
+		if err := writer.Write(reference); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	return path
+}
+
+func writeTestQuantizedBinaryReferences(t *testing.T, references []Reference) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "references.bin")
+	writer, err := fraudindex.CreateQuantizedBinary(path)
+	if err != nil {
+		t.Fatalf("CreateQuantizedBinary failed: %v", err)
 	}
 	for _, reference := range references {
 		if err := writer.Write(reference); err != nil {

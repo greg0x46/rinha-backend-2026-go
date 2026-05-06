@@ -17,19 +17,20 @@ import (
 func main() {
 	input := flag.String("input", "data/references.json.gz", "JSON or JSON gzip references input")
 	output := flag.String("output", "data/references.bin", "binary references output")
+	format := flag.String("format", "int16", "binary format: int16 or float32")
 	expect := flag.Uint64("expect", 3_000_000, "expected reference count; set 0 to skip validation")
 	flag.Parse()
 
 	started := time.Now()
-	count, err := preprocess(*input, *output, *expect)
+	count, err := preprocess(*input, *output, *format, *expect)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("wrote %d references to %s in %s\n", count, *output, time.Since(started).Round(time.Millisecond))
+	fmt.Printf("wrote %d %s references to %s in %s\n", count, *format, *output, time.Since(started).Round(time.Millisecond))
 }
 
-func preprocess(inputPath, outputPath string, expected uint64) (uint64, error) {
+func preprocess(inputPath, outputPath, format string, expected uint64) (uint64, error) {
 	input, err := os.Open(inputPath)
 	if err != nil {
 		return 0, fmt.Errorf("open input: %w", err)
@@ -47,7 +48,7 @@ func preprocess(inputPath, outputPath string, expected uint64) (uint64, error) {
 	}
 
 	tmpPath := outputPath + ".tmp"
-	writer, err := fraudindex.CreateBinary(tmpPath)
+	writer, err := createWriter(tmpPath, format)
 	if err != nil {
 		return 0, err
 	}
@@ -72,6 +73,22 @@ func preprocess(inputPath, outputPath string, expected uint64) (uint64, error) {
 	}
 
 	return count, nil
+}
+
+type referenceWriter interface {
+	Write(fraudindex.Reference) error
+	Close() error
+}
+
+func createWriter(path, format string) (referenceWriter, error) {
+	switch format {
+	case "float32":
+		return fraudindex.CreateBinary(path)
+	case "int16":
+		return fraudindex.CreateQuantizedBinary(path)
+	default:
+		return nil, fmt.Errorf("unsupported binary format %q", format)
+	}
 }
 
 func referenceReader(path string, reader io.Reader) (io.Reader, func(), error) {

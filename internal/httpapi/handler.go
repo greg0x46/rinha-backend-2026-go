@@ -21,9 +21,9 @@ func NewHandler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	references, err := LoadReferences(referencesPath())
+	scorer, err := LoadScorer(referencesPath())
 
-	return newHandler(vectorizer, NewScorer(references), err == nil && len(references) > 0)
+	return newHandler(vectorizer, scorer, err == nil && scorer.HasReferences())
 }
 
 func NewHandlerWithDependencies(vectorizer Vectorizer, scorer Scorer) http.Handler {
@@ -40,6 +40,13 @@ func newHandler(vectorizer Vectorizer, scorer Scorer, ready bool) http.Handler {
 	mux.HandleFunc("GET /ready", h.ready)
 	mux.HandleFunc("POST /fraud-score", h.fraudScore)
 	return mux
+}
+
+func (s Scorer) HasReferences() bool {
+	if s.quantized {
+		return len(s.quantizedIndex.Vectors) > 0
+	}
+	return len(s.references) > 0
 }
 
 func (h Handler) ready(w http.ResponseWriter, r *http.Request) {
