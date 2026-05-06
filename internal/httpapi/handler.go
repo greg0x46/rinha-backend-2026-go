@@ -10,6 +10,25 @@ import (
 const maxRequestBodyBytes = 16 << 10
 const defaultReferencesPath = "/app/data/references.bin"
 
+var fraudScoreResponses = [nearestNeighbors + 1][]byte{
+	mustEncode(FraudScoreResponse{Approved: true, FraudScore: 0.0}),
+	mustEncode(FraudScoreResponse{Approved: true, FraudScore: 0.2}),
+	mustEncode(FraudScoreResponse{Approved: true, FraudScore: 0.4}),
+	mustEncode(FraudScoreResponse{Approved: false, FraudScore: 0.6}),
+	mustEncode(FraudScoreResponse{Approved: false, FraudScore: 0.8}),
+	mustEncode(FraudScoreResponse{Approved: false, FraudScore: 1.0}),
+}
+
+var fallbackResponse = fraudScoreResponses[0]
+
+func mustEncode(response FraudScoreResponse) []byte {
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		panic(err)
+	}
+	return append(encoded, '\n')
+}
+
 type Handler struct {
 	vectorizer Vectorizer
 	scorer     Scorer
@@ -66,19 +85,18 @@ func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	var payload FraudScoreRequest
 	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes))
 	if err := decoder.Decode(&payload); err != nil {
-		writeJSON(w, FraudScoreResponse{Approved: true, FraudScore: 0.0})
+		writeFraudScore(w, fallbackResponse)
 		return
 	}
 
 	vector := h.vectorizer.Vectorize(payload)
-
-	writeJSON(w, h.scorer.Score(vector))
+	writeFraudScore(w, fraudScoreResponses[h.scorer.Frauds(vector)])
 }
 
-func writeJSON(w http.ResponseWriter, response FraudScoreResponse) {
+func writeFraudScore(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(response)
+	_, _ = w.Write(body)
 }
 
 func referencesPath() string {

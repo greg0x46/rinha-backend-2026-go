@@ -24,6 +24,8 @@ services:
       HTTP_ADDR: ":8080"
       REFERENCES_PATH: "/app/data/references.bin"
       IVF_NPROBE: "4"
+      GOMEMLIMIT: "112MiB"
+      GOGC: "50"
     deploy:
       resources:
         limits:
@@ -39,6 +41,8 @@ services:
       HTTP_ADDR: ":8080"
       REFERENCES_PATH: "/app/data/references.bin"
       IVF_NPROBE: "4"
+      GOMEMLIMIT: "112MiB"
+      GOGC: "50"
     deploy:
       resources:
         limits:
