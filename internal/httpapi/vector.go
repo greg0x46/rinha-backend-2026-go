@@ -4,7 +4,7 @@ import (
 	"github.com/greg/rinha-be-2026/internal/frauddata"
 )
 
-type TransactionVector [14]float64
+type Vector [14]float32
 
 type Vectorizer struct {
 	normalization frauddata.Normalization
@@ -26,32 +26,32 @@ func NewVectorizer() (Vectorizer, error) {
 	}, nil
 }
 
-func (v Vectorizer) Vectorize(request FraudScoreRequest) TransactionVector {
+func (v Vectorizer) Vectorize(request FraudScoreRequest) Vector {
 	n := v.normalization
 
 	requestedAt := request.Transaction.RequestedAt.UTC()
-	vector := TransactionVector{
-		Clamp(request.Transaction.Amount/n.MaxAmount, 0, 1),
-		Clamp(float64(request.Transaction.Installments)/n.MaxInstallments, 0, 1),
-		amountVsAvg(request.Transaction.Amount, request.Customer.AvgAmount, n.AmountVsAvgRatio),
-		float64(requestedAt.Hour()) / 23,
-		float64(dayOfWeekMondayZero(int(requestedAt.Weekday()))) / 6,
+	vector := Vector{
+		float32(Clamp(request.Transaction.Amount/n.MaxAmount, 0, 1)),
+		float32(Clamp(float64(request.Transaction.Installments)/n.MaxInstallments, 0, 1)),
+		float32(amountVsAvg(request.Transaction.Amount, request.Customer.AvgAmount, n.AmountVsAvgRatio)),
+		float32(float64(requestedAt.Hour()) / 23),
+		float32(float64(dayOfWeekMondayZero(int(requestedAt.Weekday()))) / 6),
 		-1,
 		-1,
-		Clamp(request.Terminal.KmFromHome/n.MaxKm, 0, 1),
-		Clamp(float64(request.Customer.TxCount24h)/n.MaxTxCount24h, 0, 1),
+		float32(Clamp(request.Terminal.KmFromHome/n.MaxKm, 0, 1)),
+		float32(Clamp(float64(request.Customer.TxCount24h)/n.MaxTxCount24h, 0, 1)),
 		boolFloat(request.Terminal.IsOnline),
 		boolFloat(request.Terminal.CardPresent),
 		boolFloat(!knownMerchant(request.Merchant.ID, request.Customer.KnownMerchants)),
-		v.mccRisk.For(request.Merchant.MCC),
-		Clamp(request.Merchant.AvgAmount/n.MaxMerchantAvgAmount, 0, 1),
+		float32(v.mccRisk.For(request.Merchant.MCC)),
+		float32(Clamp(request.Merchant.AvgAmount/n.MaxMerchantAvgAmount, 0, 1)),
 	}
 
 	if request.LastTransaction != nil {
 		lastAt := request.LastTransaction.Timestamp.UTC()
 		minutes := requestedAt.Sub(lastAt).Minutes()
-		vector[5] = Clamp(minutes/n.MaxMinutes, 0, 1)
-		vector[6] = Clamp(request.LastTransaction.KmFromCurrent/n.MaxKm, 0, 1)
+		vector[5] = float32(Clamp(minutes/n.MaxMinutes, 0, 1))
+		vector[6] = float32(Clamp(request.LastTransaction.KmFromCurrent/n.MaxKm, 0, 1))
 	}
 
 	return vector
@@ -75,7 +75,7 @@ func dayOfWeekMondayZero(day int) int {
 	return (day + 6) % 7
 }
 
-func boolFloat(value bool) float64 {
+func boolFloat(value bool) float32 {
 	if value {
 		return 1
 	}

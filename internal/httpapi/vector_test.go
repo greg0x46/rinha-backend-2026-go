@@ -37,7 +37,7 @@ func TestVectorizeOfficialLegitExample(t *testing.T) {
 		"last_transaction": null
 	}`)
 
-	want := TransactionVector{
+	want := Vector{
 		0.004112,
 		0.1666666667,
 		0.05,
@@ -67,7 +67,7 @@ func TestVectorizeOfficialFraudExample(t *testing.T) {
 		"last_transaction": null
 	}`)
 
-	want := TransactionVector{
+	want := Vector{
 		0.950597,
 		0.8333333333,
 		1,
@@ -117,12 +117,12 @@ func TestVectorizeLastTransactionAndFallbacks(t *testing.T) {
 	}`)
 
 	vector := vectorizer.Vectorize(request)
-	assertApprox(t, vector[5], 325.0/1440.0)
-	assertApprox(t, vector[6], 0.0188626479774)
-	assertApprox(t, vector[9], 1)
-	assertApprox(t, vector[10], 0)
-	assertApprox(t, vector[11], 0)
-	assertApprox(t, vector[12], 0.5)
+	assertApprox(t, float64(vector[5]), 325.0/1440.0)
+	assertApprox(t, float64(vector[6]), 0.0188626479774)
+	assertApprox(t, float64(vector[9]), 1)
+	assertApprox(t, float64(vector[10]), 0)
+	assertApprox(t, float64(vector[11]), 0)
+	assertApprox(t, float64(vector[12]), 0.5)
 }
 
 func newTestVectorizer(t *testing.T) Vectorizer {
@@ -143,10 +143,10 @@ func decodeFraudScoreRequest(t *testing.T, input string) FraudScoreRequest {
 	return request
 }
 
-func assertVectorApprox(t *testing.T, got, want TransactionVector) {
+func assertVectorApprox(t *testing.T, got, want Vector) {
 	t.Helper()
 	for i := range got {
-		assertApprox(t, got[i], want[i])
+		assertApprox(t, float64(got[i]), float64(want[i]))
 	}
 }
 

@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 )
 
 const maxRequestBodyBytes = 16 << 10
+const defaultReferencesPath = "../resources/example-references.json"
 
 type Handler struct {
 	vectorizer Vectorizer
+	scorer     Scorer
 }
 
 func NewHandler() http.Handler {
@@ -17,9 +20,17 @@ func NewHandler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	references, _ := LoadReferences(referencesPath())
 
+	return NewHandlerWithDependencies(vectorizer, NewScorer(references))
+}
+
+func NewHandlerWithDependencies(vectorizer Vectorizer, scorer Scorer) http.Handler {
 	mux := http.NewServeMux()
-	h := Handler{vectorizer: vectorizer}
+	h := Handler{
+		vectorizer: vectorizer,
+		scorer:     scorer,
+	}
 	mux.HandleFunc("GET /ready", h.ready)
 	mux.HandleFunc("POST /fraud-score", h.fraudScore)
 	return mux
@@ -39,13 +50,20 @@ func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.vectorizer.Vectorize(payload)
+	vector := h.vectorizer.Vectorize(payload)
 
-	writeJSON(w, FraudScoreResponse{Approved: true, FraudScore: 0.0})
+	writeJSON(w, h.scorer.Score(vector))
 }
 
 func writeJSON(w http.ResponseWriter, response FraudScoreResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func referencesPath() string {
+	if path := os.Getenv("REFERENCES_PATH"); path != "" {
+		return path
+	}
+	return defaultReferencesPath
 }

@@ -9,38 +9,31 @@ import (
 )
 
 func TestReady(t *testing.T) {
-	server := httptest.NewServer(NewHandler())
-	defer server.Close()
+	handler := NewHandler()
+	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
 
-	response, err := http.Get(server.URL + "/ready")
-	if err != nil {
-		t.Fatalf("GET /ready failed: %v", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
 	}
 }
 
 func TestFraudScoreReturnsValidFallback(t *testing.T) {
-	server := httptest.NewServer(NewHandler())
-	defer server.Close()
-
-	response, err := http.Post(
-		server.URL+"/fraud-score",
-		"application/json",
+	handler := NewHandler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/fraud-score",
 		strings.NewReader(`{"id":"tx-1"}`),
 	)
-	if err != nil {
-		t.Fatalf("POST /fraud-score failed: %v", err)
-	}
-	defer response.Body.Close()
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
 
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusOK)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if got := response.Header.Get("Content-Type"); got != "application/json" {
+	if got := response.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("content-type = %q, want application/json", got)
 	}
 }

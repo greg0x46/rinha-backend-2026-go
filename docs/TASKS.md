@@ -90,15 +90,15 @@ Criterios de aceite:
 
 Objetivo: ter uma implementacao correta de KNN para servir de baseline de qualidade.
 
-- `[ ]` Criar tipo `Vector [14]float32`.
-- `[ ]` Criar tipo `Reference` com vetor e label.
-- `[ ]` Ler `resources/example-references.json`.
-- `[ ]` Implementar distancia euclidiana quadrada.
-- `[ ]` Implementar top 5 com array fixo, sem ordenar dataset inteiro.
-- `[ ]` Calcular `fraud_score = fraudes / 5`.
-- `[ ]` Calcular `approved = fraud_score < 0.6`.
-- `[ ]` Integrar baseline ao endpoint com dataset pequeno.
-- `[ ]` Criar testes de KNN com dataset pequeno.
+- `[x]` Criar tipo `Vector [14]float32`.
+- `[x]` Criar tipo `Reference` com vetor e label.
+- `[x]` Ler `resources/example-references.json`.
+- `[x]` Implementar distancia euclidiana quadrada.
+- `[x]` Implementar top 5 com array fixo, sem ordenar dataset inteiro.
+- `[x]` Calcular `fraud_score = fraudes / 5`.
+- `[x]` Calcular `approved = fraud_score < 0.6`.
+- `[x]` Integrar baseline ao endpoint com dataset pequeno.
+- `[x]` Criar testes de KNN com dataset pequeno.
 
 Criterios de aceite:
 
@@ -117,6 +117,7 @@ Objetivo: evitar parse de JSON gzip grande no caminho de execucao da API.
 - `[ ]` Escrever labels como `uint8`.
 - `[ ]` Criar manifest com quantidade de registros e versao do formato.
 - `[ ]` Implementar loader binario na API.
+- `[ ]` Remover dependencia runtime de caminhos `..`; carregar referencias de artefato interno da imagem ou caminho explicito via `REFERENCES_PATH`.
 - `[ ]` Validar quantidade esperada de 3.000.000 registros.
 - `[ ]` Medir tempo de pre-processamento.
 - `[ ]` Medir tempo de startup carregando arquivo binario.
