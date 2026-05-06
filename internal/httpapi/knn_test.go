@@ -59,6 +59,68 @@ func TestLoadScorerUsesQuantizedBinary(t *testing.T) {
 	}
 }
 
+func TestLoadScorerUsesIVFBinary(t *testing.T) {
+	path := writeTestIVFBinaryReferences(t, []Reference{
+		{Vector: Vector{0: -0.02}, Label: LabelFraud},
+		{Vector: Vector{0: -0.01}, Label: LabelFraud},
+		{Vector: Vector{0: 0.00}, Label: LabelFraud},
+		{Vector: Vector{0: 0.01}, Label: LabelLegit},
+		{Vector: Vector{0: 0.02}, Label: LabelLegit},
+		{Vector: Vector{0: 0.90}, Label: LabelLegit},
+	})
+
+	scorer, err := LoadScorer(path)
+	if err != nil {
+		t.Fatalf("LoadScorer failed: %v", err)
+	}
+	if !scorer.ivf {
+		t.Fatal("LoadScorer did not load IVF scorer")
+	}
+
+	response := scorer.Score(Vector{})
+	if response.FraudScore != 0.6 {
+		t.Fatalf("FraudScore = %v, want 0.6", response.FraudScore)
+	}
+	if response.Approved {
+		t.Fatal("Approved = true, want false")
+	}
+}
+
+func TestIVFScorerCanRetryBoundaryWithMoreLists(t *testing.T) {
+	centroids := make([]fraudindex.QuantizedVector, 16)
+	for i := range centroids {
+		centroids[i] = fraudindex.QuantizeVector(Vector{0: float32(i+1) / 10})
+	}
+	index := fraudindex.IVFIndex{
+		Centroids: centroids,
+		Offsets:   []uint64{0, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6},
+		Vectors: []fraudindex.QuantizedVector{
+			fraudindex.QuantizeVector(Vector{0: 0.01}),
+			fraudindex.QuantizeVector(Vector{0: 0.02}),
+			fraudindex.QuantizeVector(Vector{0: 0.03}),
+			fraudindex.QuantizeVector(Vector{0: 0.04}),
+			fraudindex.QuantizeVector(Vector{0: 0.05}),
+			fraudindex.QuantizeVector(Vector{0: 0.00}),
+		},
+		Labels: []fraudindex.Label{
+			fraudindex.LabelFraud,
+			fraudindex.LabelFraud,
+			fraudindex.LabelLegit,
+			fraudindex.LabelLegit,
+			fraudindex.LabelLegit,
+			fraudindex.LabelFraud,
+		},
+	}
+	response := NewIVFScorer(index).Score(Vector{})
+
+	if response.FraudScore != 0.6 {
+		t.Fatalf("FraudScore = %v, want 0.6", response.FraudScore)
+	}
+	if response.Approved {
+		t.Fatal("Approved = true, want false")
+	}
+}
+
 func TestSquaredDistance(t *testing.T) {
 	a := Vector{0: 1, 1: 2, 2: -1}
 	b := Vector{0: 4, 1: 6, 2: -1}
@@ -198,6 +260,15 @@ func writeTestQuantizedBinaryReferences(t *testing.T, references []Reference) st
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
+	}
+	return path
+}
+
+func writeTestIVFBinaryReferences(t *testing.T, references []Reference) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "references.bin")
+	if _, err := fraudindex.WriteIVFBinary(path, references, 2); err != nil {
+		t.Fatalf("WriteIVFBinary failed: %v", err)
 	}
 	return path
 }

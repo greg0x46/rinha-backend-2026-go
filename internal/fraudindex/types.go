@@ -20,3 +20,10 @@ type QuantizedIndex struct {
 	Vectors []QuantizedVector
 	Labels  []Label
 }
+
+type IVFIndex struct {
+	Centroids []QuantizedVector
+	Offsets   []uint64
+	Vectors   []QuantizedVector
+	Labels    []Label
+}

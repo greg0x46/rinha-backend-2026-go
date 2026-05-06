@@ -117,6 +117,53 @@ func TestQuantizedBinaryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIVFBinaryRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "references.bin")
+	want := []Reference{
+		{Vector: Vector{0: -0.9}, Label: LabelLegit},
+		{Vector: Vector{0: -0.8}, Label: LabelFraud},
+		{Vector: Vector{0: 0.8}, Label: LabelFraud},
+		{Vector: Vector{0: 0.9}, Label: LabelLegit},
+	}
+
+	manifest, err := WriteIVFBinary(path, want, 2)
+	if err != nil {
+		t.Fatalf("WriteIVFBinary failed: %v", err)
+	}
+	if manifest.Version != IVFBinaryVersion {
+		t.Fatalf("manifest.Version = %d, want %d", manifest.Version, IVFBinaryVersion)
+	}
+	if manifest.NList != 2 {
+		t.Fatalf("manifest.NList = %d, want 2", manifest.NList)
+	}
+
+	got, loadedManifest, err := LoadIVFBinary(path)
+	if err != nil {
+		t.Fatalf("LoadIVFBinary failed: %v", err)
+	}
+	if loadedManifest.Version != IVFBinaryVersion {
+		t.Fatalf("loadedManifest.Version = %d, want %d", loadedManifest.Version, IVFBinaryVersion)
+	}
+	if loadedManifest.References != uint64(len(want)) {
+		t.Fatalf("loadedManifest.References = %d, want %d", loadedManifest.References, len(want))
+	}
+	if len(got.Centroids) != 2 {
+		t.Fatalf("len(got.Centroids) = %d, want 2", len(got.Centroids))
+	}
+	if len(got.Offsets) != 3 {
+		t.Fatalf("len(got.Offsets) = %d, want 3", len(got.Offsets))
+	}
+	if got.Offsets[0] != 0 || got.Offsets[len(got.Offsets)-1] != uint64(len(want)) {
+		t.Fatalf("got.Offsets = %#v, want first 0 and last %d", got.Offsets, len(want))
+	}
+	if len(got.Vectors) != len(want) {
+		t.Fatalf("len(got.Vectors) = %d, want %d", len(got.Vectors), len(want))
+	}
+	if len(got.Labels) != len(want) {
+		t.Fatalf("len(got.Labels) = %d, want %d", len(got.Labels), len(want))
+	}
+}
+
 func TestQuantizeVectorClampsToInt16Scale(t *testing.T) {
 	got := QuantizeVector(Vector{0: -2, 1: -1, 2: 0.5, 3: 1, 4: 2})
 

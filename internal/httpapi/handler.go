@@ -43,6 +43,9 @@ func newHandler(vectorizer Vectorizer, scorer Scorer, ready bool) http.Handler {
 }
 
 func (s Scorer) HasReferences() bool {
+	if s.ivf {
+		return len(s.ivfIndex.Vectors) > 0
+	}
 	if s.quantized {
 		return len(s.quantizedIndex.Vectors) > 0
 	}

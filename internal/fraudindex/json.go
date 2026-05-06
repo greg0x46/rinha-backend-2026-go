@@ -37,6 +37,18 @@ func LoadJSONReferences(path string) ([]Reference, error) {
 	return references, nil
 }
 
+func LoadJSONReferencesFromReader(reader io.Reader) ([]Reference, error) {
+	var references []Reference
+	_, err := StreamJSONReferences(reader, func(reference Reference) error {
+		references = append(references, reference)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return references, nil
+}
+
 func StreamJSONReferences(reader io.Reader, handle func(Reference) error) (uint64, error) {
 	decoder := json.NewDecoder(reader)
 

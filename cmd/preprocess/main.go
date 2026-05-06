@@ -17,12 +17,13 @@ import (
 func main() {
 	input := flag.String("input", "data/references.json.gz", "JSON or JSON gzip references input")
 	output := flag.String("output", "data/references.bin", "binary references output")
-	format := flag.String("format", "int16", "binary format: int16 or float32")
+	format := flag.String("format", "int16", "binary format: int16, ivf-int16, or float32")
 	expect := flag.Uint64("expect", 3_000_000, "expected reference count; set 0 to skip validation")
+	nlist := flag.Uint("nlist", 1024, "IVF list count when format=ivf-int16")
 	flag.Parse()
 
 	started := time.Now()
-	count, err := preprocess(*input, *output, *format, *expect)
+	count, err := preprocess(*input, *output, *format, *expect, uint32(*nlist))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func main() {
 	fmt.Printf("wrote %d %s references to %s in %s\n", count, *format, *output, time.Since(started).Round(time.Millisecond))
 }
 
-func preprocess(inputPath, outputPath, format string, expected uint64) (uint64, error) {
+func preprocess(inputPath, outputPath, format string, expected uint64, nlist uint32) (uint64, error) {
 	input, err := os.Open(inputPath)
 	if err != nil {
 		return 0, fmt.Errorf("open input: %w", err)
@@ -48,6 +49,28 @@ func preprocess(inputPath, outputPath, format string, expected uint64) (uint64, 
 	}
 
 	tmpPath := outputPath + ".tmp"
+	if format == "ivf-int16" {
+		references, err := fraudindex.LoadJSONReferencesFromReader(reader)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return 0, err
+		}
+		count := uint64(len(references))
+		if expected != 0 && count != expected {
+			_ = os.Remove(tmpPath)
+			return count, fmt.Errorf("reference count = %d, want %d", count, expected)
+		}
+		if _, err := fraudindex.WriteIVFBinary(tmpPath, references, nlist); err != nil {
+			_ = os.Remove(tmpPath)
+			return count, err
+		}
+		if err := os.Rename(tmpPath, outputPath); err != nil {
+			_ = os.Remove(tmpPath)
+			return count, fmt.Errorf("replace output: %w", err)
+		}
+		return count, nil
+	}
+
 	writer, err := createWriter(tmpPath, format)
 	if err != nil {
 		return 0, err

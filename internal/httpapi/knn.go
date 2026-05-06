@@ -3,11 +3,30 @@ package httpapi
 import (
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 
 	"github.com/greg/rinha-be-2026/internal/fraudindex"
 )
 
 const nearestNeighbors = 5
+const defaultIVFNProbe = 8
+const defaultIVFBoundaryNProbe = 32
+
+var ivfNProbe = envInt("IVF_NPROBE", defaultIVFNProbe)
+var ivfBoundaryNProbe = envInt("IVF_BOUNDARY_NPROBE", defaultIVFBoundaryNProbe)
+
+func envInt(name string, fallback int) int {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
 
 type Label = fraudindex.Label
 type Reference = fraudindex.Reference
@@ -18,7 +37,9 @@ const LabelFraud = fraudindex.LabelFraud
 type Scorer struct {
 	references     []Reference
 	quantizedIndex fraudindex.QuantizedIndex
+	ivfIndex       fraudindex.IVFIndex
 	quantized      bool
+	ivf            bool
 }
 
 func NewScorer(references []Reference) Scorer {
@@ -27,6 +48,10 @@ func NewScorer(references []Reference) Scorer {
 
 func NewQuantizedScorer(index fraudindex.QuantizedIndex) Scorer {
 	return Scorer{quantizedIndex: index, quantized: true}
+}
+
+func NewIVFScorer(index fraudindex.IVFIndex) Scorer {
+	return Scorer{ivfIndex: index, ivf: true}
 }
 
 func LoadReferences(path string) ([]Reference, error) {
@@ -38,6 +63,11 @@ func LoadReferences(path string) ([]Reference, error) {
 }
 
 func LoadScorer(path string) (Scorer, error) {
+	ivfIndex, _, ivfErr := fraudindex.LoadIVFBinary(path)
+	if ivfErr == nil {
+		return NewIVFScorer(ivfIndex), nil
+	}
+
 	index, _, err := fraudindex.LoadQuantizedBinary(path)
 	if err == nil {
 		return NewQuantizedScorer(index), nil
@@ -48,10 +78,13 @@ func LoadScorer(path string) (Scorer, error) {
 		return NewScorer(references), nil
 	}
 
-	return Scorer{}, fmt.Errorf("load quantized references: %v; load float32 references: %w", err, floatErr)
+	return Scorer{}, fmt.Errorf("load ivf references: %v; load quantized references: %v; load float32 references: %w", ivfErr, err, floatErr)
 }
 
 func (s Scorer) Score(query Vector) FraudScoreResponse {
+	if s.ivf {
+		return s.scoreIVF(query)
+	}
 	if s.quantized {
 		return s.scoreQuantized(query)
 	}
@@ -81,6 +114,47 @@ func (s Scorer) Score(query Vector) FraudScoreResponse {
 		Approved:   score < 0.6,
 		FraudScore: score,
 	}
+}
+
+func (s Scorer) scoreIVF(query Vector) FraudScoreResponse {
+	if len(s.ivfIndex.Vectors) == 0 {
+		return FraudScoreResponse{Approved: true, FraudScore: 0}
+	}
+
+	quantizedQuery := fraudindex.QuantizeVector(query)
+	neighbors := s.nearestIVF(quantizedQuery, ivfNProbe)
+	frauds, found := s.countIVFFrauds(neighbors)
+	if found == 0 {
+		return FraudScoreResponse{Approved: true, FraudScore: 0}
+	}
+	if frauds == 2 || frauds == 3 {
+		neighbors = s.nearestIVF(quantizedQuery, ivfBoundaryNProbe)
+		frauds, found = s.countIVFFrauds(neighbors)
+		if found == 0 {
+			return FraudScoreResponse{Approved: true, FraudScore: 0}
+		}
+	}
+
+	score := float64(frauds) / nearestNeighbors
+	return FraudScoreResponse{
+		Approved:   score < 0.6,
+		FraudScore: score,
+	}
+}
+
+func (s Scorer) countIVFFrauds(neighbors [nearestNeighbors]quantizedNeighbor) (int, int) {
+	frauds := 0
+	found := 0
+	for _, neighbor := range neighbors {
+		if neighbor.index < 0 {
+			continue
+		}
+		found++
+		if s.ivfIndex.Labels[neighbor.index] == fraudindex.LabelFraud {
+			frauds++
+		}
+	}
+	return frauds, found
 }
 
 func (s Scorer) scoreQuantized(query Vector) FraudScoreResponse {
@@ -158,6 +232,61 @@ func (s Scorer) nearestQuantized(query fraudindex.QuantizedVector) [nearestNeigh
 		}
 	}
 
+	return best
+}
+
+func (s Scorer) nearestIVF(query fraudindex.QuantizedVector, nprobe int) [nearestNeighbors]quantizedNeighbor {
+	best := [nearestNeighbors]quantizedNeighbor{
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+	}
+	if nprobe > len(s.ivfIndex.Centroids) {
+		nprobe = len(s.ivfIndex.Centroids)
+	}
+	if nprobe <= 0 {
+		return best
+	}
+
+	lists := s.nearestIVFLists(query, nprobe)
+	for _, list := range lists {
+		start := s.ivfIndex.Offsets[list.index]
+		end := s.ivfIndex.Offsets[list.index+1]
+		for i := start; i < end; i++ {
+			distance := squaredQuantizedDistance(query, s.ivfIndex.Vectors[int(i)])
+			worst := 0
+			for j := 1; j < len(best); j++ {
+				if best[j].distance > best[worst].distance {
+					worst = j
+				}
+			}
+			if distance < best[worst].distance {
+				best[worst] = quantizedNeighbor{index: int(i), distance: distance}
+			}
+		}
+	}
+	return best
+}
+
+func (s Scorer) nearestIVFLists(query fraudindex.QuantizedVector, nprobe int) []quantizedNeighbor {
+	best := make([]quantizedNeighbor, nprobe)
+	for i := range best {
+		best[i] = quantizedNeighbor{index: -1, distance: math.MaxUint64}
+	}
+	for i, centroid := range s.ivfIndex.Centroids {
+		distance := squaredQuantizedDistance(query, centroid)
+		worst := 0
+		for j := 1; j < len(best); j++ {
+			if best[j].distance > best[worst].distance {
+				worst = j
+			}
+		}
+		if distance < best[worst].distance {
+			best[worst] = quantizedNeighbor{index: i, distance: distance}
+		}
+	}
 	return best
 }
 
