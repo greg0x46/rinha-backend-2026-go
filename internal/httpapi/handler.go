@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/greg/rinha-be-2026/internal/metrics"
 )
 
 const maxRequestBodyBytes = 16 << 10
@@ -82,15 +84,29 @@ func (h Handler) ready(w http.ResponseWriter, r *http.Request) {
 func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	var payload FraudScoreRequest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes))
-	if err := decoder.Decode(&payload); err != nil {
+	t := metrics.Now()
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes))
+	if err != nil {
 		writeFraudScore(w, fallbackResponse)
 		return
 	}
+	t = metrics.Since(t, metrics.StageReadBody)
+
+	var payload FraudScoreRequest
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeFraudScore(w, fallbackResponse)
+		return
+	}
+	t = metrics.Since(t, metrics.StageDecode)
 
 	vector := h.vectorizer.Vectorize(payload)
-	writeFraudScore(w, fraudScoreResponses[h.scorer.Frauds(vector)])
+	t = metrics.Since(t, metrics.StageVectorize)
+
+	frauds := h.scorer.Frauds(vector)
+	t = metrics.Since(t, metrics.StageScore)
+
+	writeFraudScore(w, fraudScoreResponses[frauds])
+	metrics.Since(t, metrics.StageWrite)
 }
 
 func writeFraudScore(w http.ResponseWriter, body []byte) {

@@ -1,0 +1,20 @@
+services:
+  api1:
+    build:
+      context: .
+      dockerfile: Dockerfile.profile
+    image: rinha-be-2026-api:profile
+    environment:
+      GODEBUG: "gctrace=1"
+    ports:
+      - "127.0.0.1:6061:6060"
+
+  api2:
+    build:
+      context: .
+      dockerfile: Dockerfile.profile
+    image: rinha-be-2026-api:profile
+    environment:
+      GODEBUG: "gctrace=1"
+    ports:
+      - "127.0.0.1:6062:6060"

@@ -9,7 +9,7 @@ COPY . .
 ARG TARGETOS
 ARG TARGETARCH
 RUN go run ./cmd/preprocess -input data/references.json.gz -output /out/data/references.bin -format ivf-int16 -nlist 2048
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -tags=instrument,pprof -o /out/api ./cmd/api
 
 FROM alpine:3.21
 
@@ -21,4 +21,5 @@ COPY --from=build /out/data/ /app/data/
 
 USER app
 
+EXPOSE 6060
 ENTRYPOINT ["/app/api"]

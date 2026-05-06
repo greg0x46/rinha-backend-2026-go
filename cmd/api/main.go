@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/greg/rinha-be-2026/internal/httpapi"
+	"github.com/greg/rinha-be-2026/internal/profiling"
 )
 
 func main() {
@@ -18,7 +21,15 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	profiling.StartDebugListener()
+
 	addr := env("HTTP_ADDR", ":8080")
+	listener, err := listen(addr)
+	if err != nil {
+		logger.Error("listen failed", "addr", addr, "err", err)
+		os.Exit(1)
+	}
+
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           httpapi.NewHandler(),
@@ -31,7 +42,7 @@ func main() {
 	errs := make(chan error, 1)
 	go func() {
 		logger.Info("api listening", "addr", addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs <- err
 			return
 		}
@@ -66,4 +77,20 @@ func env(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func listen(addr string) (net.Listener, error) {
+	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
+		_ = os.Remove(path)
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(path, 0o666); err != nil {
+			ln.Close()
+			return nil, err
+		}
+		return ln, nil
+	}
+	return net.Listen("tcp", addr)
 }
