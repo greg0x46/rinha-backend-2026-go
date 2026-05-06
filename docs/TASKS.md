@@ -111,16 +111,16 @@ Criterios de aceite:
 
 Objetivo: evitar parse de JSON gzip grande no caminho de execucao da API.
 
-- `[ ]` Criar comando `cmd/preprocess`.
-- `[ ]` Ler `../resources/references.json.gz`.
-- `[ ]` Escrever formato binario `float32` inicial.
-- `[ ]` Escrever labels como `uint8`.
-- `[ ]` Criar manifest com quantidade de registros e versao do formato.
-- `[ ]` Implementar loader binario na API.
-- `[ ]` Remover dependencia runtime de caminhos `..`; carregar referencias de artefato interno da imagem ou caminho explicito via `REFERENCES_PATH`.
-- `[ ]` Validar quantidade esperada de 3.000.000 registros.
-- `[ ]` Medir tempo de pre-processamento.
-- `[ ]` Medir tempo de startup carregando arquivo binario.
+- `[x]` Criar comando `cmd/preprocess`.
+- `[x]` Ler dataset oficial a partir de caminho interno/configuravel, sem exigir `..` no fluxo canonico.
+- `[x]` Escrever formato binario `float32` inicial.
+- `[x]` Escrever labels como `uint8`.
+- `[x]` Criar manifest com quantidade de registros e versao do formato.
+- `[x]` Implementar loader binario na API.
+- `[x]` Remover dependencia runtime de caminhos `..`; carregar referencias de artefato interno da imagem ou caminho explicito via `REFERENCES_PATH`.
+- `[x]` Validar quantidade esperada de 3.000.000 registros.
+- `[x]` Medir tempo de pre-processamento.
+- `[x]` Medir tempo de startup carregando arquivo binario.
 
 Criterios de aceite:
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestReady(t *testing.T) {
-	handler := NewHandler()
+	handler := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -20,7 +20,7 @@ func TestReady(t *testing.T) {
 }
 
 func TestFraudScoreReturnsValidFallback(t *testing.T) {
-	handler := NewHandler()
+	handler := newTestHandler(t)
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/fraud-score",
@@ -36,6 +36,50 @@ func TestFraudScoreReturnsValidFallback(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("content-type = %q, want application/json", got)
 	}
+}
+
+func TestReadyReturnsUnavailableWithoutReferences(t *testing.T) {
+	vectorizer := newTestVectorizer(t)
+	handler := newHandler(vectorizer, NewScorer(nil), false)
+	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestNewHandlerReadyAfterLoadingBinaryReferences(t *testing.T) {
+	path := writeTestBinaryReferences(t, []Reference{
+		{Vector: Vector{}, Label: LabelLegit},
+		{Vector: Vector{0: 0.01}, Label: LabelLegit},
+		{Vector: Vector{0: 0.02}, Label: LabelLegit},
+		{Vector: Vector{0: 0.03}, Label: LabelLegit},
+		{Vector: Vector{0: 0.04}, Label: LabelLegit},
+	})
+	t.Setenv("REFERENCES_PATH", path)
+
+	handler := NewHandler()
+	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+}
+
+func newTestHandler(t *testing.T) http.Handler {
+	t.Helper()
+	vectorizer := newTestVectorizer(t)
+	return NewHandlerWithDependencies(vectorizer, NewScorer([]Reference{
+		{Vector: Vector{}, Label: LabelLegit},
+		{Vector: Vector{0: 0.01}, Label: LabelLegit},
+		{Vector: Vector{0: 0.02}, Label: LabelLegit},
+		{Vector: Vector{0: 0.03}, Label: LabelLegit},
+		{Vector: Vector{0: 0.04}, Label: LabelLegit},
+	}))
 }
 
 func TestFraudScoreRequestDecodesOfficialPayload(t *testing.T) {

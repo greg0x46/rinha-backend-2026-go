@@ -2,9 +2,10 @@ package httpapi
 
 import (
 	"github.com/greg/rinha-be-2026/internal/frauddata"
+	"github.com/greg/rinha-be-2026/internal/fraudindex"
 )
 
-type Vector [14]float32
+type Vector = fraudindex.Vector
 
 type Vectorizer struct {
 	normalization frauddata.Normalization

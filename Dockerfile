@@ -8,14 +8,18 @@ RUN go mod download
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
+RUN go run ./cmd/preprocess -input data/references.json.gz -output /out/data/references.bin
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
 FROM alpine:3.21
 
 RUN adduser -D -H -u 10001 app
+
+WORKDIR /app
+COPY --from=build /out/api /app/api
+COPY --from=build /out/data/ /app/data/
+
 USER app
 
-COPY --from=build /out/api /api
-
 EXPOSE 8080
-ENTRYPOINT ["/api"]
+ENTRYPOINT ["/app/api"]

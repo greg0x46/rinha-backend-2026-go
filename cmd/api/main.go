@@ -24,7 +24,7 @@ func main() {
 		Handler:           httpapi.NewHandler(),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       2 * time.Second,
-		WriteTimeout:      2 * time.Second,
+		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
 

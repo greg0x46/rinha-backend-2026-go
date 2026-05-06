@@ -1,26 +1,19 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
-	"os"
+
+	"github.com/greg/rinha-be-2026/internal/fraudindex"
 )
 
 const nearestNeighbors = 5
 
-type Label uint8
+type Label = fraudindex.Label
+type Reference = fraudindex.Reference
 
-const (
-	LabelLegit Label = iota
-	LabelFraud
-)
-
-type Reference struct {
-	Vector Vector
-	Label  Label
-}
+const LabelLegit = fraudindex.LabelLegit
+const LabelFraud = fraudindex.LabelFraud
 
 type Scorer struct {
 	references []Reference
@@ -31,30 +24,9 @@ func NewScorer(references []Reference) Scorer {
 }
 
 func LoadReferences(path string) ([]Reference, error) {
-	file, err := os.Open(path)
+	references, _, err := fraudindex.LoadBinary(path)
 	if err != nil {
-		return nil, fmt.Errorf("open references: %w", err)
-	}
-	defer file.Close()
-
-	var raw []struct {
-		Vector Vector `json:"vector"`
-		Label  string `json:"label"`
-	}
-	if err := json.NewDecoder(file).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode references: %w", err)
-	}
-
-	references := make([]Reference, 0, len(raw))
-	for i, item := range raw {
-		label, err := parseLabel(item.Label)
-		if err != nil {
-			return nil, fmt.Errorf("reference %d: %w", i, err)
-		}
-		references = append(references, Reference{
-			Vector: item.Vector,
-			Label:  label,
-		})
+		return nil, fmt.Errorf("load binary references: %w", err)
 	}
 	return references, nil
 }
@@ -72,7 +44,7 @@ func (s Scorer) Score(query Vector) FraudScoreResponse {
 			continue
 		}
 		found++
-		if s.references[neighbor.index].Label == LabelFraud {
+		if s.references[neighbor.index].Label == fraudindex.LabelFraud {
 			frauds++
 		}
 	}
@@ -124,15 +96,4 @@ func squaredDistance(a, b Vector) float32 {
 type neighbor struct {
 	index    int
 	distance float32
-}
-
-func parseLabel(label string) (Label, error) {
-	switch label {
-	case "legit":
-		return LabelLegit, nil
-	case "fraud":
-		return LabelFraud, nil
-	default:
-		return 0, errors.New("unknown label " + label)
-	}
 }

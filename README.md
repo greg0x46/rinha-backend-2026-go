@@ -24,6 +24,16 @@ Rodar testes:
 go test ./...
 ```
 
+Gerar o indice binario local:
+
+```sh
+go run ./cmd/preprocess
+```
+
+O dataset oficial compactado fica versionado em `data/references.json.gz`.
+O preprocessamento gera `data/references.bin`, que e ignorado pelo Git.
+O build Docker tambem gera esse binario automaticamente dentro da imagem.
+
 Subir a topologia local:
 
 ```sh

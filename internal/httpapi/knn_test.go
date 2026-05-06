@@ -4,18 +4,26 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/greg/rinha-be-2026/internal/fraudindex"
 )
 
 func TestLoadReferences(t *testing.T) {
-	references, err := LoadReferences("../../../resources/example-references.json")
+	path := writeTestBinaryReferences(t, []Reference{
+		{Vector: Vector{0: 0.01}, Label: LabelLegit},
+		{Vector: Vector{0: 0.02}, Label: LabelFraud},
+	})
+
+	references, err := LoadReferences(path)
 	if err != nil {
 		t.Fatalf("LoadReferences failed: %v", err)
 	}
 
-	if len(references) == 0 {
-		t.Fatal("len(references) = 0, want > 0")
+	if len(references) != 2 {
+		t.Fatalf("len(references) = %d, want 2", len(references))
 	}
 	if references[0].Vector[0] != 0.01 {
 		t.Fatalf("references[0].Vector[0] = %v, want 0.01", references[0].Vector[0])
@@ -94,4 +102,22 @@ func TestFraudScoreUsesScorer(t *testing.T) {
 	if body.Approved {
 		t.Fatal("Approved = true, want false")
 	}
+}
+
+func writeTestBinaryReferences(t *testing.T, references []Reference) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "references.bin")
+	writer, err := fraudindex.CreateBinary(path)
+	if err != nil {
+		t.Fatalf("CreateBinary failed: %v", err)
+	}
+	for _, reference := range references {
+		if err := writer.Write(reference); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	return path
 }

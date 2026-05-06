@@ -8,11 +8,12 @@ import (
 )
 
 const maxRequestBodyBytes = 16 << 10
-const defaultReferencesPath = "../resources/example-references.json"
+const defaultReferencesPath = "/app/data/references.bin"
 
 type Handler struct {
 	vectorizer Vectorizer
 	scorer     Scorer
+	isReady    bool
 }
 
 func NewHandler() http.Handler {
@@ -20,16 +21,21 @@ func NewHandler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	references, _ := LoadReferences(referencesPath())
+	references, err := LoadReferences(referencesPath())
 
-	return NewHandlerWithDependencies(vectorizer, NewScorer(references))
+	return newHandler(vectorizer, NewScorer(references), err == nil && len(references) > 0)
 }
 
 func NewHandlerWithDependencies(vectorizer Vectorizer, scorer Scorer) http.Handler {
+	return newHandler(vectorizer, scorer, true)
+}
+
+func newHandler(vectorizer Vectorizer, scorer Scorer, ready bool) http.Handler {
 	mux := http.NewServeMux()
 	h := Handler{
 		vectorizer: vectorizer,
 		scorer:     scorer,
+		isReady:    ready,
 	}
 	mux.HandleFunc("GET /ready", h.ready)
 	mux.HandleFunc("POST /fraud-score", h.fraudScore)
@@ -37,6 +43,10 @@ func NewHandlerWithDependencies(vectorizer Vectorizer, scorer Scorer) http.Handl
 }
 
 func (h Handler) ready(w http.ResponseWriter, r *http.Request) {
+	if !h.isReady {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
