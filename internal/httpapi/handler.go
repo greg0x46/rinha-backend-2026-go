@@ -8,16 +8,18 @@ import (
 
 const maxRequestBodyBytes = 16 << 10
 
-type Handler struct{}
-
-type FraudScoreResponse struct {
-	Approved   bool    `json:"approved"`
-	FraudScore float64 `json:"fraud_score"`
+type Handler struct {
+	vectorizer Vectorizer
 }
 
 func NewHandler() http.Handler {
+	vectorizer, err := NewVectorizer()
+	if err != nil {
+		panic(err)
+	}
+
 	mux := http.NewServeMux()
-	h := Handler{}
+	h := Handler{vectorizer: vectorizer}
 	mux.HandleFunc("GET /ready", h.ready)
 	mux.HandleFunc("POST /fraud-score", h.fraudScore)
 	return mux
@@ -30,12 +32,14 @@ func (h Handler) ready(w http.ResponseWriter, r *http.Request) {
 func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	var payload map[string]any
+	var payload FraudScoreRequest
 	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes))
 	if err := decoder.Decode(&payload); err != nil {
 		writeJSON(w, FraudScoreResponse{Approved: true, FraudScore: 0.0})
 		return
 	}
+
+	_ = h.vectorizer.Vectorize(payload)
 
 	writeJSON(w, FraudScoreResponse{Approved: true, FraudScore: 0.0})
 }

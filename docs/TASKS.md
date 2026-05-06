@@ -56,28 +56,28 @@ Criterios de aceite:
 
 Objetivo: transformar corretamente o payload oficial no vetor de 14 dimensoes.
 
-- `[ ]` Criar structs tipadas para o payload de `POST /fraud-score`.
-- `[ ]` Criar structs tipadas para a resposta.
-- `[ ]` Implementar carga de `resources/normalization.json`.
-- `[ ]` Implementar carga de `resources/mcc_risk.json`.
-- `[ ]` Implementar funcao `Clamp`.
-- `[ ]` Implementar calculo de `amount`.
-- `[ ]` Implementar calculo de `installments`.
-- `[ ]` Implementar calculo de `amount_vs_avg`.
-- `[ ]` Implementar calculo de `hour_of_day` em UTC.
-- `[ ]` Implementar calculo de `day_of_week` com segunda-feira = 0.
-- `[ ]` Implementar `minutes_since_last_tx`.
-- `[ ]` Implementar `km_from_last_tx`.
-- `[ ]` Implementar sentinela `-1` quando `last_transaction` for `null`.
-- `[ ]` Implementar `km_from_home`.
-- `[ ]` Implementar `tx_count_24h`.
-- `[ ]` Implementar `is_online`.
-- `[ ]` Implementar `card_present`.
-- `[ ]` Implementar `unknown_merchant`.
-- `[ ]` Implementar `mcc_risk` com fallback `0.5`.
-- `[ ]` Implementar `merchant_avg_amount`.
-- `[ ]` Cobrir vetorizacao com exemplos dos docs.
-- `[ ]` Cobrir casos de MCC desconhecido e comerciante conhecido/desconhecido.
+- `[x]` Criar structs tipadas para o payload de `POST /fraud-score`.
+- `[x]` Criar structs tipadas para a resposta.
+- `[x]` Implementar carga de `resources/normalization.json`.
+- `[x]` Implementar carga de `resources/mcc_risk.json`.
+- `[x]` Implementar funcao `Clamp`.
+- `[x]` Implementar calculo de `amount`.
+- `[x]` Implementar calculo de `installments`.
+- `[x]` Implementar calculo de `amount_vs_avg`.
+- `[x]` Implementar calculo de `hour_of_day` em UTC.
+- `[x]` Implementar calculo de `day_of_week` com segunda-feira = 0.
+- `[x]` Implementar `minutes_since_last_tx`.
+- `[x]` Implementar `km_from_last_tx`.
+- `[x]` Implementar sentinela `-1` quando `last_transaction` for `null`.
+- `[x]` Implementar `km_from_home`.
+- `[x]` Implementar `tx_count_24h`.
+- `[x]` Implementar `is_online`.
+- `[x]` Implementar `card_present`.
+- `[x]` Implementar `unknown_merchant`.
+- `[x]` Implementar `mcc_risk` com fallback `0.5`.
+- `[x]` Implementar `merchant_avg_amount`.
+- `[x]` Cobrir vetorizacao com exemplos dos docs.
+- `[x]` Cobrir casos de MCC desconhecido e comerciante conhecido/desconhecido.
 
 Criterios de aceite:
 
