@@ -1,0 +1,17 @@
+# Build outputs
+/bin/
+/dist/
+/tmp/
+
+# Generated reference/index files
+/data/*.bin
+/data/*.idx
+/data/*.tmp
+
+# Local test outputs
+/results.json
+/test-results/
+
+# Environment
+.env
+ /docs
