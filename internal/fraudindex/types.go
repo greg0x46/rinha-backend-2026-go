@@ -27,3 +27,10 @@ type IVFIndex struct {
 	Vectors   []QuantizedVector
 	Labels    []Label
 }
+
+type KMeansIVFIndex struct {
+	Centroids []Vector
+	Offsets   []uint64
+	Vectors   []QuantizedVector
+	Labels    []Label
+}

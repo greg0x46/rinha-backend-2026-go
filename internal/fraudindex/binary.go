@@ -15,6 +15,7 @@ const (
 	BinaryVersion          = uint32(1)
 	QuantizedBinaryVersion = uint32(2)
 	IVFBinaryVersion       = uint32(3)
+	KMeansIVFBinaryVersion = uint32(4)
 	Dimensions             = uint32(14)
 	QuantizationScale      = uint32(32767)
 )
@@ -599,7 +600,7 @@ func readHeader(reader io.Reader) (Manifest, error) {
 	if err := binary.Read(reader, binary.LittleEndian, &manifest.Version); err != nil {
 		return Manifest{}, fmt.Errorf("read binary version: %w", err)
 	}
-	if manifest.Version != BinaryVersion && manifest.Version != QuantizedBinaryVersion && manifest.Version != IVFBinaryVersion {
+	if manifest.Version != BinaryVersion && manifest.Version != QuantizedBinaryVersion && manifest.Version != IVFBinaryVersion && manifest.Version != KMeansIVFBinaryVersion {
 		return Manifest{}, fmt.Errorf("unsupported binary references version %d", manifest.Version)
 	}
 	if err := binary.Read(reader, binary.LittleEndian, &manifest.Dimension); err != nil {
@@ -611,12 +612,12 @@ func readHeader(reader io.Reader) (Manifest, error) {
 	if err := binary.Read(reader, binary.LittleEndian, &manifest.References); err != nil {
 		return Manifest{}, fmt.Errorf("read binary reference count: %w", err)
 	}
-	if manifest.Version == QuantizedBinaryVersion || manifest.Version == IVFBinaryVersion {
+	if manifest.Version == QuantizedBinaryVersion || manifest.Version == IVFBinaryVersion || manifest.Version == KMeansIVFBinaryVersion {
 		if err := binary.Read(reader, binary.LittleEndian, &manifest.Scale); err != nil {
 			return Manifest{}, fmt.Errorf("read binary quantization scale: %w", err)
 		}
 	}
-	if manifest.Version == IVFBinaryVersion {
+	if manifest.Version == IVFBinaryVersion || manifest.Version == KMeansIVFBinaryVersion {
 		if err := binary.Read(reader, binary.LittleEndian, &manifest.NList); err != nil {
 			return Manifest{}, fmt.Errorf("read binary ivf list count: %w", err)
 		}

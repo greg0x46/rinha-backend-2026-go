@@ -12,10 +12,14 @@ import (
 const nearestNeighbors = 5
 const defaultIVFNProbe = 8
 const defaultIVFBoundaryNProbe = 32
+const defaultKMeansQuickProbe = 8
+const defaultKMeansExpandedProbe = 20
 
 var ivfNProbe = envInt("IVF_NPROBE", defaultIVFNProbe)
 var ivfBoundaryNProbe = envInt("IVF_BOUNDARY_NPROBE", defaultIVFBoundaryNProbe)
 var ivfBoundaryRetry = os.Getenv("IVF_BOUNDARY_RETRY") != "off"
+var kmeansQuickProbe = envInt("KMEANS_QUICK_PROBE", defaultKMeansQuickProbe)
+var kmeansExpandedProbe = envInt("KMEANS_EXPANDED_PROBE", defaultKMeansExpandedProbe)
 
 // maxIVFNProbe is the largest nprobe ever used by Score; the scratch arrays
 // for centroid selection are sized to it so the hot path never allocates.
@@ -43,8 +47,10 @@ type Scorer struct {
 	references     []Reference
 	quantizedIndex fraudindex.QuantizedIndex
 	ivfIndex       fraudindex.IVFIndex
+	kmeansIndex    fraudindex.KMeansIVFIndex
 	quantized      bool
 	ivf            bool
+	kmeans         bool
 }
 
 func NewScorer(references []Reference) Scorer {
@@ -59,6 +65,10 @@ func NewIVFScorer(index fraudindex.IVFIndex) Scorer {
 	return Scorer{ivfIndex: index, ivf: true}
 }
 
+func NewKMeansIVFScorer(index fraudindex.KMeansIVFIndex) Scorer {
+	return Scorer{kmeansIndex: index, kmeans: true}
+}
+
 func LoadReferences(path string) ([]Reference, error) {
 	references, _, err := fraudindex.LoadBinary(path)
 	if err != nil {
@@ -68,6 +78,11 @@ func LoadReferences(path string) ([]Reference, error) {
 }
 
 func LoadScorer(path string) (Scorer, error) {
+	kmeansIndex, _, kmeansErr := fraudindex.LoadKMeansIVFBinary(path)
+	if kmeansErr == nil {
+		return NewKMeansIVFScorer(kmeansIndex), nil
+	}
+
 	ivfIndex, _, ivfErr := fraudindex.LoadIVFBinary(path)
 	if ivfErr == nil {
 		return NewIVFScorer(ivfIndex), nil
@@ -83,13 +98,16 @@ func LoadScorer(path string) (Scorer, error) {
 		return NewScorer(references), nil
 	}
 
-	return Scorer{}, fmt.Errorf("load ivf references: %v; load quantized references: %v; load float32 references: %w", ivfErr, err, floatErr)
+	return Scorer{}, fmt.Errorf("load kmeans ivf references: %v; load ivf references: %v; load quantized references: %v; load float32 references: %w", kmeansErr, ivfErr, err, floatErr)
 }
 
 // Frauds returns the number of fraud labels (0..nearestNeighbors) found among
 // the closest neighbors of query. It is the primitive the API hot path uses to
 // pick a pre-formatted JSON response.
 func (s Scorer) Frauds(query Vector) int {
+	if s.kmeans {
+		return s.fraudsKMeansIVF(query)
+	}
 	if s.ivf {
 		return s.fraudsIVF(query)
 	}
@@ -97,6 +115,19 @@ func (s Scorer) Frauds(query Vector) int {
 		return s.fraudsQuantized(query)
 	}
 	return s.fraudsExact(query)
+}
+
+func (s Scorer) fraudsKMeansIVF(query Vector) int {
+	if len(s.kmeansIndex.Vectors) == 0 {
+		return 0
+	}
+	neighbors := s.nearestKMeansIVF(query, kmeansQuickProbe)
+	frauds := countQuantizedFrauds(neighbors, s.kmeansIndex.Labels)
+	if frauds == 2 || frauds == 3 {
+		neighbors = s.nearestKMeansIVF(query, kmeansExpandedProbe)
+		frauds = countQuantizedFrauds(neighbors, s.kmeansIndex.Labels)
+	}
+	return frauds
 }
 
 func (s Scorer) Score(query Vector) FraudScoreResponse {
@@ -265,6 +296,65 @@ func (s Scorer) nearestIVFLists(query fraudindex.QuantizedVector, nprobe int, be
 	return best
 }
 
+func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]quantizedNeighbor {
+	best := [nearestNeighbors]quantizedNeighbor{
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+	}
+	if nprobe > len(s.kmeansIndex.Centroids) {
+		nprobe = len(s.kmeansIndex.Centroids)
+	}
+	if nprobe <= 0 {
+		return best
+	}
+
+	var listsBuf [maxIVFNProbe]floatNeighbor
+	if nprobe > len(listsBuf) {
+		nprobe = len(listsBuf)
+	}
+	lists := s.nearestKMeansLists(query, nprobe, listsBuf[:nprobe])
+	quantizedQuery := fraudindex.QuantizeVector(query)
+	for _, list := range lists {
+		start := s.kmeansIndex.Offsets[list.index]
+		end := s.kmeansIndex.Offsets[list.index+1]
+		for i := start; i < end; i++ {
+			distance := squaredQuantizedDistance(quantizedQuery, s.kmeansIndex.Vectors[int(i)])
+			worst := 0
+			for j := 1; j < len(best); j++ {
+				if best[j].distance > best[worst].distance {
+					worst = j
+				}
+			}
+			if distance < best[worst].distance {
+				best[worst] = quantizedNeighbor{index: int(i), distance: distance}
+			}
+		}
+	}
+	return best
+}
+
+func (s Scorer) nearestKMeansLists(query Vector, nprobe int, best []floatNeighbor) []floatNeighbor {
+	for i := range best {
+		best[i] = floatNeighbor{index: -1, distance: float32(math.Inf(1))}
+	}
+	for i, centroid := range s.kmeansIndex.Centroids {
+		distance := squaredDistance(query, centroid)
+		worst := 0
+		for j := 1; j < len(best); j++ {
+			if best[j].distance > best[worst].distance {
+				worst = j
+			}
+		}
+		if distance < best[worst].distance {
+			best[worst] = floatNeighbor{index: i, distance: distance}
+		}
+	}
+	return best
+}
+
 func squaredDistance(a, b Vector) float32 {
 	var distance float32
 	for i := range a {
@@ -291,4 +381,9 @@ type neighbor struct {
 type quantizedNeighbor struct {
 	index    int
 	distance uint64
+}
+
+type floatNeighbor struct {
+	index    int
+	distance float32
 }

@@ -18,9 +18,9 @@ type testFile struct {
 }
 
 type testEntry struct {
-	Request             httpapi.FraudScoreRequest `json:"request"`
-	ExpectedApproved    bool                      `json:"expected_approved"`
-	ExpectedFraudScore  float64                   `json:"expected_fraud_score"`
+	Request            httpapi.FraudScoreRequest `json:"request"`
+	ExpectedApproved   bool                      `json:"expected_approved"`
+	ExpectedFraudScore float64                   `json:"expected_fraud_score"`
 }
 
 type stat struct {
@@ -79,31 +79,30 @@ func main() {
 	}
 
 	t0 := time.Now()
-	ivfIndex, ivfManifest, err := fraudindex.LoadIVFBinary(*ivfPath)
+	ivfScorer, ivfManifest, ivfKind, err := loadCandidateScorer(*ivfPath)
 	if err != nil {
-		log.Fatalf("load ivf: %v", err)
+		log.Fatalf("load candidate index: %v", err)
 	}
-	ivfScorer := httpapi.NewIVFScorer(ivfIndex)
-	fmt.Printf("ivf index: %d refs, %d lists, loaded in %s\n",
-		ivfManifest.References, ivfManifest.NList, time.Since(t0).Round(time.Millisecond))
+	fmt.Printf("%s index: %d refs, %d lists, loaded in %s\n",
+		ivfKind, ivfManifest.References, ivfManifest.NList, time.Since(t0).Round(time.Millisecond))
 
 	var exactScorer httpapi.Scorer
 	hasExact := false
 	if !*skipExact {
-	if _, err := os.Stat(*exactPath); err == nil {
-		t0 = time.Now()
-		exactIndex, exactManifest, err := fraudindex.LoadQuantizedBinary(*exactPath)
-		if err == nil {
-			exactScorer = httpapi.NewQuantizedScorer(exactIndex)
-			hasExact = true
-			fmt.Printf("exact index: %d refs, loaded in %s\n",
-				exactManifest.References, time.Since(t0).Round(time.Millisecond))
+		if _, err := os.Stat(*exactPath); err == nil {
+			t0 = time.Now()
+			exactIndex, exactManifest, err := fraudindex.LoadQuantizedBinary(*exactPath)
+			if err == nil {
+				exactScorer = httpapi.NewQuantizedScorer(exactIndex)
+				hasExact = true
+				fmt.Printf("exact index: %d refs, loaded in %s\n",
+					exactManifest.References, time.Since(t0).Round(time.Millisecond))
+			} else {
+				fmt.Printf("exact index unavailable (%v); skipping exact comparison\n", err)
+			}
 		} else {
-			fmt.Printf("exact index unavailable (%v); skipping exact comparison\n", err)
+			fmt.Printf("exact index path %q missing; skipping exact comparison\n", *exactPath)
 		}
-	} else {
-		fmt.Printf("exact index path %q missing; skipping exact comparison\n", *exactPath)
-	}
 	} else {
 		fmt.Println("exact comparison skipped (--skip-exact)")
 	}
@@ -190,6 +189,18 @@ func main() {
 		fmt.Printf("  IVF wrong, exact correct: %d\n", disagreeExactOnly)
 		fmt.Printf("  both wrong (different way): %d\n", disagreeBothWrong)
 	}
+}
+
+func loadCandidateScorer(path string) (httpapi.Scorer, fraudindex.Manifest, string, error) {
+	kmeansIndex, kmeansManifest, err := fraudindex.LoadKMeansIVFBinary(path)
+	if err == nil {
+		return httpapi.NewKMeansIVFScorer(kmeansIndex), kmeansManifest, "kmeans-ivf", nil
+	}
+	ivfIndex, ivfManifest, ivfErr := fraudindex.LoadIVFBinary(path)
+	if ivfErr == nil {
+		return httpapi.NewIVFScorer(ivfIndex), ivfManifest, "ivf", nil
+	}
+	return httpapi.Scorer{}, fraudindex.Manifest{}, "", fmt.Errorf("kmeans ivf: %v; ivf: %w", err, ivfErr)
 }
 
 func printStats(s stat, withTime bool) {

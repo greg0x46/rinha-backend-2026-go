@@ -77,6 +77,9 @@ func newHandler(vectorizer Vectorizer, scorer Scorer, ready bool) http.Handler {
 }
 
 func (s Scorer) HasReferences() bool {
+	if s.kmeans {
+		return len(s.kmeansIndex.Vectors) > 0
+	}
 	if s.ivf {
 		return len(s.ivfIndex.Vectors) > 0
 	}

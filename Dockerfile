@@ -8,7 +8,7 @@ RUN go mod download
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-RUN go run ./cmd/preprocess -input data/references.json.gz -output /out/data/references.bin -format ivf-int16 -nlist 2048
+RUN go run ./cmd/preprocess -input data/references.json.gz -output /out/data/references.bin -format kmeans-ivf-int16 -nlist 2048 -kmeans-iter 8 -kmeans-sample 20000
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
 FROM alpine:3.21
