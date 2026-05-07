@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"encoding/json"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -226,6 +229,146 @@ func TestFraudScoreUsesScorer(t *testing.T) {
 	if body.Approved {
 		t.Fatal("Approved = true, want false")
 	}
+}
+
+func TestKMeansIVFBlockedScanMatchesAoS(t *testing.T) {
+	for _, n := range []int{1, 7, 8, 9, 16, 17, 37, 64, 65} {
+		t.Run(fmtInt(n), func(t *testing.T) {
+			rng := rand.New(rand.NewSource(int64(0x2026 ^ n)))
+			vectors := make([]fraudindex.QuantizedVector, n)
+			labels := make([]fraudindex.Label, n)
+			for i := 0; i < n; i++ {
+				for d := range vectors[i] {
+					vectors[i][d] = int16(rng.Intn(60001) - 30000)
+				}
+				if rng.Intn(3) == 0 {
+					labels[i] = fraudindex.LabelFraud
+				} else {
+					labels[i] = fraudindex.LabelLegit
+				}
+			}
+
+			split := n / 2
+			offsets := []uint64{0, uint64(split), uint64(n)}
+			centroids := []fraudindex.Vector{{}, {}}
+			blocked := fraudindex.BuildBlockedKMeansIVF(centroids, offsets, vectors, labels)
+			scorer := NewKMeansIVFScorer(blocked)
+
+			var query Vector
+			for d := range query {
+				query[d] = (rng.Float32()*2 - 1)
+			}
+			quantizedQuery := fraudindex.QuantizeVector(query)
+
+			gotNeighbors := scorer.nearestKMeansIVF(query, len(centroids))
+			gotDistances := sortedQuantizedDistances(gotNeighbors[:])
+			gotFrauds := countQuantizedFrauds(gotNeighbors, blocked.BlockLabels)
+
+			wantNeighbors := bruteForceTopK(quantizedQuery, vectors)
+			wantDistances := sortedQuantizedDistances(wantNeighbors[:])
+			wantFrauds := countQuantizedFrauds(wantNeighbors, labels)
+
+			if !equalUint64Slices(gotDistances, wantDistances) {
+				t.Fatalf("distances mismatch: got %v want %v", gotDistances, wantDistances)
+			}
+			if gotFrauds != wantFrauds {
+				t.Fatalf("frauds mismatch: got %d want %d", gotFrauds, wantFrauds)
+			}
+		})
+	}
+}
+
+func TestKMeansIVFScorerEndToEndDecision(t *testing.T) {
+	references := []Reference{
+		{Vector: Vector{0: 0.005}, Label: LabelFraud},
+		{Vector: Vector{0: 0.006}, Label: LabelFraud},
+		{Vector: Vector{0: 0.007}, Label: LabelFraud},
+		{Vector: Vector{0: 0.010}, Label: LabelLegit},
+		{Vector: Vector{0: 0.020}, Label: LabelLegit},
+		{Vector: Vector{0: 0.030}, Label: LabelLegit},
+		{Vector: Vector{0: 0.040}, Label: LabelLegit},
+		{Vector: Vector{0: 0.050}, Label: LabelLegit},
+		{Vector: Vector{0: 0.500}, Label: LabelLegit},
+	}
+	vectors := make([]fraudindex.QuantizedVector, len(references))
+	labels := make([]fraudindex.Label, len(references))
+	for i, ref := range references {
+		vectors[i] = fraudindex.QuantizeVector(ref.Vector)
+		labels[i] = ref.Label
+	}
+	offsets := []uint64{0, uint64(len(references))}
+	centroids := []fraudindex.Vector{{}}
+	blocked := fraudindex.BuildBlockedKMeansIVF(centroids, offsets, vectors, labels)
+
+	response := NewKMeansIVFScorer(blocked).Score(Vector{})
+	if response.FraudScore != 0.6 {
+		t.Fatalf("FraudScore = %v, want 0.6", response.FraudScore)
+	}
+	if response.Approved {
+		t.Fatal("Approved = true, want false")
+	}
+}
+
+func bruteForceTopK(query fraudindex.QuantizedVector, vectors []fraudindex.QuantizedVector) [nearestNeighbors]quantizedNeighbor {
+	best := [nearestNeighbors]quantizedNeighbor{
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+		{index: -1, distance: math.MaxUint64},
+	}
+	for i, vector := range vectors {
+		distance := squaredQuantizedDistance(query, vector)
+		worst := 0
+		for j := 1; j < len(best); j++ {
+			if best[j].distance > best[worst].distance {
+				worst = j
+			}
+		}
+		if distance < best[worst].distance {
+			best[worst] = quantizedNeighbor{index: i, distance: distance}
+		}
+	}
+	return best
+}
+
+func sortedQuantizedDistances(neighbors []quantizedNeighbor) []uint64 {
+	out := make([]uint64, 0, len(neighbors))
+	for _, n := range neighbors {
+		if n.index < 0 {
+			continue
+		}
+		out = append(out, n.distance)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func equalUint64Slices(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fmtInt(n int) string {
+	if n < 0 {
+		return "neg"
+	}
+	if n == 0 {
+		return "0"
+	}
+	digits := []byte{}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return "n" + string(digits)
 }
 
 func writeTestBinaryReferences(t *testing.T, references []Reference) string {

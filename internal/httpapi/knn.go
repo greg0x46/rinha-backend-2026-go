@@ -118,14 +118,14 @@ func (s Scorer) Frauds(query Vector) int {
 }
 
 func (s Scorer) fraudsKMeansIVF(query Vector) int {
-	if len(s.kmeansIndex.Vectors) == 0 {
+	if len(s.kmeansIndex.Blocks) == 0 {
 		return 0
 	}
 	neighbors := s.nearestKMeansIVF(query, kmeansQuickProbe)
-	frauds := countQuantizedFrauds(neighbors, s.kmeansIndex.Labels)
+	frauds := countQuantizedFrauds(neighbors, s.kmeansIndex.BlockLabels)
 	if frauds == 2 || frauds == 3 {
 		neighbors = s.nearestKMeansIVF(query, kmeansExpandedProbe)
-		frauds = countQuantizedFrauds(neighbors, s.kmeansIndex.Labels)
+		frauds = countQuantizedFrauds(neighbors, s.kmeansIndex.BlockLabels)
 	}
 	return frauds
 }
@@ -317,23 +317,61 @@ func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]qua
 	}
 	lists := s.nearestKMeansLists(query, nprobe, listsBuf[:nprobe])
 	quantizedQuery := fraudindex.QuantizeVector(query)
+	blocks := s.kmeansIndex.Blocks
 	for _, list := range lists {
-		start := s.kmeansIndex.Offsets[list.index]
-		end := s.kmeansIndex.Offsets[list.index+1]
-		for i := start; i < end; i++ {
-			distance := squaredQuantizedDistance(quantizedQuery, s.kmeansIndex.Vectors[int(i)])
-			worst := 0
-			for j := 1; j < len(best); j++ {
-				if best[j].distance > best[worst].distance {
-					worst = j
-				}
-			}
-			if distance < best[worst].distance {
-				best[worst] = quantizedNeighbor{index: int(i), distance: distance}
-			}
+		listIdx := list.index
+		blockStart := s.kmeansIndex.BlockListOffsets[listIdx]
+		blockEnd := s.kmeansIndex.BlockListOffsets[listIdx+1]
+		if blockStart == blockEnd {
+			continue
+		}
+		listSize := s.kmeansIndex.Offsets[listIdx+1] - s.kmeansIndex.Offsets[listIdx]
+		validLast := int(listSize % fraudindex.KMeansBlockSize)
+		fullEnd := blockEnd
+		if validLast != 0 {
+			fullEnd = blockEnd - 1
+		}
+		for b := blockStart; b < fullEnd; b++ {
+			updateTop5FromBlock(&best, &quantizedQuery, blocks, b, fraudindex.KMeansBlockSize)
+		}
+		if validLast != 0 {
+			updateTop5FromBlock(&best, &quantizedQuery, blocks, fullEnd, validLast)
 		}
 	}
 	return best
+}
+
+// updateTop5FromBlock computes squared distances between the query and the
+// validLanes (1..KMeansBlockSize) reference vectors packed at blockIdx in
+// the SoA layout, then merges them into best. Padding lanes (above
+// validLanes in a tail block) are skipped without participating in the
+// distance accumulation result that gets considered.
+func updateTop5FromBlock(best *[nearestNeighbors]quantizedNeighbor, query *fraudindex.QuantizedVector, blocks []int16, blockIdx uint32, validLanes int) {
+	base := int(blockIdx) * fraudindex.KMeansBlockStride
+	var dist [fraudindex.KMeansBlockSize]uint64
+	for d := 0; d < int(fraudindex.Dimensions); d++ {
+		qd := int64(query[d])
+		row := blocks[base+d*fraudindex.KMeansBlockSize : base+d*fraudindex.KMeansBlockSize+fraudindex.KMeansBlockSize]
+		for l := 0; l < fraudindex.KMeansBlockSize; l++ {
+			delta := qd - int64(row[l])
+			dist[l] += uint64(delta * delta)
+		}
+	}
+	for l := 0; l < validLanes; l++ {
+		d := dist[l]
+		worst := 0
+		for j := 1; j < len(best); j++ {
+			if best[j].distance > best[worst].distance {
+				worst = j
+			}
+		}
+		if d < best[worst].distance {
+			best[worst] = quantizedNeighbor{
+				index:    int(blockIdx)*fraudindex.KMeansBlockSize + l,
+				distance: d,
+			}
+		}
+	}
 }
 
 func (s Scorer) nearestKMeansLists(query Vector, nprobe int, best []floatNeighbor) []floatNeighbor {

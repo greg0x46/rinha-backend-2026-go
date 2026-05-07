@@ -55,20 +55,31 @@ func DefaultKMeansBuildOptions() KMeansBuildOptions {
 	}
 }
 
+// kmeansIVFAoS is the array-of-struct layout produced during the build
+// phase. It mirrors the on-disk format and is only used to write the
+// binary; the in-memory scoring representation (KMeansIVFIndex) uses an
+// SoA block layout built at load time.
+type kmeansIVFAoS struct {
+	Centroids []Vector
+	Offsets   []uint64
+	Vectors   []QuantizedVector
+	Labels    []Label
+}
+
 func WriteKMeansIVFBinary(path string, references []Reference, opts KMeansBuildOptions) (Manifest, error) {
 	if len(references) == 0 {
 		return Manifest{}, errors.New("kmeans ivf references must not be empty")
 	}
-	index, err := BuildKMeansIVF(references, opts)
+	aos, err := buildKMeansIVFAoS(references, opts)
 	if err != nil {
 		return Manifest{}, err
 	}
-	return writeKMeansIVFIndex(path, index)
+	return writeKMeansIVFAoS(path, aos)
 }
 
-func BuildKMeansIVF(references []Reference, opts KMeansBuildOptions) (KMeansIVFIndex, error) {
+func buildKMeansIVFAoS(references []Reference, opts KMeansBuildOptions) (kmeansIVFAoS, error) {
 	if opts.K == 0 {
-		return KMeansIVFIndex{}, errors.New("kmeans ivf k must be greater than zero")
+		return kmeansIVFAoS{}, errors.New("kmeans ivf k must be greater than zero")
 	}
 	if int(opts.K) > len(references) {
 		opts.K = uint32(len(references))
@@ -117,7 +128,7 @@ func BuildKMeansIVF(references []Reference, opts KMeansBuildOptions) (KMeansIVFI
 		labels[i] = entry.label
 	}
 
-	return KMeansIVFIndex{
+	return kmeansIVFAoS{
 		Centroids: centroids,
 		Offsets:   offsets,
 		Vectors:   vectors,
@@ -274,7 +285,7 @@ func squaredDistanceFloat(a, b Vector) float32 {
 	return distance
 }
 
-func writeKMeansIVFIndex(path string, index KMeansIVFIndex) (Manifest, error) {
+func writeKMeansIVFAoS(path string, index kmeansIVFAoS) (Manifest, error) {
 	if len(index.Offsets) != len(index.Centroids)+1 {
 		return Manifest{}, errors.New("kmeans ivf offsets length does not match centroids")
 	}
@@ -328,6 +339,48 @@ func writeKMeansIVFIndex(path string, index KMeansIVFIndex) (Manifest, error) {
 	return manifest, nil
 }
 
+// BuildBlockedKMeansIVF assembles a blocked KMeansIVFIndex from AoS data
+// (the on-disk shape). It is exposed primarily so tests can construct
+// indices without round-tripping through a binary file.
+func BuildBlockedKMeansIVF(centroids []Vector, offsets []uint64, vectors []QuantizedVector, labels []Label) KMeansIVFIndex {
+	nLists := len(centroids)
+	blockListOffsets := make([]uint32, nLists+1)
+	var totalBlocks uint32
+	for i := 0; i < nLists; i++ {
+		listSize := uint32(offsets[i+1] - offsets[i])
+		blockListOffsets[i] = totalBlocks
+		totalBlocks += (listSize + KMeansBlockSize - 1) / KMeansBlockSize
+	}
+	blockListOffsets[nLists] = totalBlocks
+
+	blocks := make([]int16, int(totalBlocks)*KMeansBlockStride)
+	blockLabels := make([]Label, int(totalBlocks)*KMeansBlockSize)
+
+	for i := 0; i < nLists; i++ {
+		listStart := int(offsets[i])
+		listSize := int(offsets[i+1] - offsets[i])
+		blockBase := int(blockListOffsets[i])
+		for k := 0; k < listSize; k++ {
+			blockIdx := blockBase + k/KMeansBlockSize
+			lane := k % KMeansBlockSize
+			vec := vectors[listStart+k]
+			base := blockIdx * KMeansBlockStride
+			for d := 0; d < int(Dimensions); d++ {
+				blocks[base+d*KMeansBlockSize+lane] = vec[d]
+			}
+			blockLabels[blockIdx*KMeansBlockSize+lane] = labels[listStart+k]
+		}
+	}
+
+	return KMeansIVFIndex{
+		Centroids:        centroids,
+		Offsets:          offsets,
+		BlockListOffsets: blockListOffsets,
+		Blocks:           blocks,
+		BlockLabels:      blockLabels,
+	}
+}
+
 func LoadKMeansIVFBinary(path string) (KMeansIVFIndex, Manifest, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -350,43 +403,72 @@ func LoadKMeansIVFBinary(path string) (KMeansIVFIndex, Manifest, error) {
 	}
 
 	reader := bufio.NewReaderSize(file, 1<<20)
-	index := KMeansIVFIndex{
-		Centroids: make([]Vector, manifest.NList),
-		Offsets:   make([]uint64, manifest.NList+1),
-		Vectors:   make([]QuantizedVector, manifest.References),
-		Labels:    make([]Label, manifest.References),
-	}
-	for i := range index.Centroids {
-		for d := range index.Centroids[i] {
-			if err := binary.Read(reader, binary.LittleEndian, &index.Centroids[i][d]); err != nil {
+	centroids := make([]Vector, manifest.NList)
+	offsets := make([]uint64, int(manifest.NList)+1)
+	for i := range centroids {
+		for d := range centroids[i] {
+			if err := binary.Read(reader, binary.LittleEndian, &centroids[i][d]); err != nil {
 				return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("read kmeans ivf centroid %d: %w", i, err)
 			}
 		}
 	}
-	for i := range index.Offsets {
-		if err := binary.Read(reader, binary.LittleEndian, &index.Offsets[i]); err != nil {
+	for i := range offsets {
+		if err := binary.Read(reader, binary.LittleEndian, &offsets[i]); err != nil {
 			return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("read kmeans ivf offset %d: %w", i, err)
 		}
 	}
-	if index.Offsets[0] != 0 || index.Offsets[len(index.Offsets)-1] != manifest.References {
+	if offsets[0] != 0 || offsets[len(offsets)-1] != manifest.References {
 		return KMeansIVFIndex{}, Manifest{}, errors.New("kmeans ivf offsets do not match reference count")
 	}
-	for i := 1; i < len(index.Offsets); i++ {
-		if index.Offsets[i] < index.Offsets[i-1] {
+	for i := 1; i < len(offsets); i++ {
+		if offsets[i] < offsets[i-1] {
 			return KMeansIVFIndex{}, Manifest{}, errors.New("kmeans ivf offsets are not monotonic")
 		}
 	}
 
+	nLists := int(manifest.NList)
+	blockListOffsets := make([]uint32, nLists+1)
+	var totalBlocks uint32
+	for i := 0; i < nLists; i++ {
+		listSize := uint32(offsets[i+1] - offsets[i])
+		blockListOffsets[i] = totalBlocks
+		totalBlocks += (listSize + KMeansBlockSize - 1) / KMeansBlockSize
+	}
+	blockListOffsets[nLists] = totalBlocks
+
+	blocks := make([]int16, int(totalBlocks)*KMeansBlockStride)
+	blockLabels := make([]Label, int(totalBlocks)*KMeansBlockSize)
+
+	listIdx := 0
+	for listIdx < nLists && offsets[listIdx] == offsets[listIdx+1] {
+		listIdx++
+	}
+
 	var record [Dimensions*2 + 1]byte
-	for i := range index.Vectors {
+	var qv QuantizedVector
+	for i := uint64(0); i < manifest.References; i++ {
+		for listIdx < nLists && i >= offsets[listIdx+1] {
+			listIdx++
+		}
+		if listIdx >= nLists {
+			return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("kmeans ivf reference %d falls outside any list", i)
+		}
 		if _, err := io.ReadFull(reader, record[:]); err != nil {
 			return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("read kmeans ivf reference %d: %w", i, err)
 		}
-		readQuantizedVector(record[:Dimensions*2], &index.Vectors[i])
-		index.Labels[i] = Label(record[len(record)-1])
-		if index.Labels[i] != LabelLegit && index.Labels[i] != LabelFraud {
-			return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("reference %d has invalid label %d", i, index.Labels[i])
+		readQuantizedVector(record[:Dimensions*2], &qv)
+		label := Label(record[len(record)-1])
+		if label != LabelLegit && label != LabelFraud {
+			return KMeansIVFIndex{}, Manifest{}, fmt.Errorf("reference %d has invalid label %d", i, label)
 		}
+		k := uint32(i - offsets[listIdx])
+		blockIdx := blockListOffsets[listIdx] + k/KMeansBlockSize
+		lane := int(k % KMeansBlockSize)
+		base := int(blockIdx) * KMeansBlockStride
+		for d := 0; d < int(Dimensions); d++ {
+			blocks[base+d*KMeansBlockSize+lane] = qv[d]
+		}
+		blockLabels[int(blockIdx)*KMeansBlockSize+lane] = label
 	}
 
 	var extra [1]byte
@@ -397,5 +479,11 @@ func LoadKMeansIVFBinary(path string) (KMeansIVFIndex, Manifest, error) {
 	if n != 0 {
 		return KMeansIVFIndex{}, Manifest{}, errors.New("kmeans ivf binary references has trailing data")
 	}
-	return index, manifest, nil
+	return KMeansIVFIndex{
+		Centroids:        centroids,
+		Offsets:          offsets,
+		BlockListOffsets: blockListOffsets,
+		Blocks:           blocks,
+		BlockLabels:      blockLabels,
+	}, manifest, nil
 }
