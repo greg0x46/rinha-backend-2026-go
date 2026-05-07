@@ -317,6 +317,8 @@ func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]qua
 	}
 	lists := s.nearestKMeansLists(query, nprobe, listsBuf[:nprobe])
 	quantizedQuery := fraudindex.QuantizeVector(query)
+	var broadcastedQuery [fraudindex.KMeansBlockStride]int16
+	fraudindex.BroadcastQuery(quantizedQuery, &broadcastedQuery)
 	blocks := s.kmeansIndex.Blocks
 	for _, list := range lists {
 		listIdx := list.index
@@ -332,10 +334,10 @@ func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]qua
 			fullEnd = blockEnd - 1
 		}
 		for b := blockStart; b < fullEnd; b++ {
-			updateTop5FromBlock(&best, &quantizedQuery, blocks, b, fraudindex.KMeansBlockSize)
+			updateTop5FromBlock(&best, &broadcastedQuery, blocks, b, fraudindex.KMeansBlockSize)
 		}
 		if validLast != 0 {
-			updateTop5FromBlock(&best, &quantizedQuery, blocks, fullEnd, validLast)
+			updateTop5FromBlock(&best, &broadcastedQuery, blocks, fullEnd, validLast)
 		}
 	}
 	return best
@@ -344,19 +346,14 @@ func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]qua
 // updateTop5FromBlock computes squared distances between the query and the
 // validLanes (1..KMeansBlockSize) reference vectors packed at blockIdx in
 // the SoA layout, then merges them into best. Padding lanes (above
-// validLanes in a tail block) are skipped without participating in the
-// distance accumulation result that gets considered.
-func updateTop5FromBlock(best *[nearestNeighbors]quantizedNeighbor, query *fraudindex.QuantizedVector, blocks []int16, blockIdx uint32, validLanes int) {
+// validLanes in a tail block) are skipped. The broadcasted query is
+// expected to have each dim replicated across KMeansBlockSize lanes so the
+// SIMD-friendly kernel can MOVOU 16 bytes per dim.
+func updateTop5FromBlock(best *[nearestNeighbors]quantizedNeighbor, query *[fraudindex.KMeansBlockStride]int16, blocks []int16, blockIdx uint32, validLanes int) {
 	base := int(blockIdx) * fraudindex.KMeansBlockStride
+	blockPtr := (*[fraudindex.KMeansBlockStride]int16)(blocks[base : base+fraudindex.KMeansBlockStride])
 	var dist [fraudindex.KMeansBlockSize]uint64
-	for d := 0; d < int(fraudindex.Dimensions); d++ {
-		qd := int64(query[d])
-		row := blocks[base+d*fraudindex.KMeansBlockSize : base+d*fraudindex.KMeansBlockSize+fraudindex.KMeansBlockSize]
-		for l := 0; l < fraudindex.KMeansBlockSize; l++ {
-			delta := qd - int64(row[l])
-			dist[l] += uint64(delta * delta)
-		}
-	}
+	fraudindex.BlockSquaredDistance(query, blockPtr, &dist)
 	for l := 0; l < validLanes; l++ {
 		d := dist[l]
 		worst := 0
