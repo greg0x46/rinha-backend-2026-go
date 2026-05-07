@@ -22,7 +22,12 @@ type Normalization struct {
 	MaxMerchantAvgAmount float64 `json:"max_merchant_avg_amount"`
 }
 
-type MCCRisk map[string]float64
+const mccTableSize = 10000
+const mccDefaultRisk float32 = 0.5
+
+type MCCRisk struct {
+	table [mccTableSize]float32
+}
 
 func LoadNormalization() (Normalization, error) {
 	var normalization Normalization
@@ -32,17 +37,44 @@ func LoadNormalization() (Normalization, error) {
 	return normalization, nil
 }
 
-func LoadMCCRisk() (MCCRisk, error) {
-	var risk MCCRisk
-	if err := json.Unmarshal(mccRiskJSON, &risk); err != nil {
+func LoadMCCRisk() (*MCCRisk, error) {
+	var raw map[string]float64
+	if err := json.Unmarshal(mccRiskJSON, &raw); err != nil {
 		return nil, fmt.Errorf("decode embedded mcc_risk.json: %w", err)
+	}
+	risk := &MCCRisk{}
+	for i := range risk.table {
+		risk.table[i] = mccDefaultRisk
+	}
+	for k, v := range raw {
+		idx, ok := parseMCC(k)
+		if !ok {
+			continue
+		}
+		risk.table[idx] = float32(v)
 	}
 	return risk, nil
 }
 
-func (r MCCRisk) For(mcc string) float64 {
-	if value, ok := r[mcc]; ok {
-		return value
+func (r *MCCRisk) For(mcc string) float32 {
+	idx, ok := parseMCC(mcc)
+	if !ok {
+		return mccDefaultRisk
 	}
-	return 0.5
+	return r.table[idx]
+}
+
+func parseMCC(s string) (int, bool) {
+	if len(s) == 0 || len(s) > 4 {
+		return 0, false
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
 }

@@ -15,6 +15,7 @@ const defaultIVFBoundaryNProbe = 32
 
 var ivfNProbe = envInt("IVF_NPROBE", defaultIVFNProbe)
 var ivfBoundaryNProbe = envInt("IVF_BOUNDARY_NPROBE", defaultIVFBoundaryNProbe)
+var ivfBoundaryRetry = os.Getenv("IVF_BOUNDARY_RETRY") != "off"
 
 // maxIVFNProbe is the largest nprobe ever used by Score; the scratch arrays
 // for centroid selection are sized to it so the hot path never allocates.
@@ -136,7 +137,7 @@ func (s Scorer) fraudsIVF(query Vector) int {
 	quantizedQuery := fraudindex.QuantizeVector(query)
 	neighbors := s.nearestIVF(quantizedQuery, ivfNProbe)
 	frauds := countQuantizedFrauds(neighbors, s.ivfIndex.Labels)
-	if frauds == 2 || frauds == 3 {
+	if ivfBoundaryRetry && (frauds == 2 || frauds == 3) {
 		neighbors = s.nearestIVF(quantizedQuery, ivfBoundaryNProbe)
 		frauds = countQuantizedFrauds(neighbors, s.ivfIndex.Labels)
 	}

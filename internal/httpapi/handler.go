@@ -1,16 +1,29 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/greg/rinha-be-2026/internal/metrics"
 )
 
 const maxRequestBodyBytes = 16 << 10
 const defaultReferencesPath = "/app/data/references.bin"
+
+var requestPool = sync.Pool{
+	New: func() any { return &FraudScoreRequest{} },
+}
+
+var bodyBufPool = sync.Pool{
+	New: func() any {
+		buf := bytes.NewBuffer(make([]byte, 0, maxRequestBodyBytes))
+		return buf
+	},
+}
 
 var fraudScoreResponses = [nearestNeighbors + 1][]byte{
 	mustEncode(FraudScoreResponse{Approved: true, FraudScore: 0.0}),
@@ -84,22 +97,30 @@ func (h Handler) ready(w http.ResponseWriter, r *http.Request) {
 func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
+	buf := bodyBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bodyBufPool.Put(buf)
+
+	payload := requestPool.Get().(*FraudScoreRequest)
+	defer func() {
+		*payload = FraudScoreRequest{}
+		requestPool.Put(payload)
+	}()
+
 	t := metrics.Now()
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes))
-	if err != nil {
+	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxRequestBodyBytes)); err != nil {
 		writeFraudScore(w, fallbackResponse)
 		return
 	}
 	t = metrics.Since(t, metrics.StageReadBody)
 
-	var payload FraudScoreRequest
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := json.Unmarshal(buf.Bytes(), payload); err != nil {
 		writeFraudScore(w, fallbackResponse)
 		return
 	}
 	t = metrics.Since(t, metrics.StageDecode)
 
-	vector := h.vectorizer.Vectorize(payload)
+	vector := h.vectorizer.Vectorize(*payload)
 	t = metrics.Since(t, metrics.StageVectorize)
 
 	frauds := h.scorer.Frauds(vector)

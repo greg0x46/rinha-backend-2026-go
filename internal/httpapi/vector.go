@@ -8,7 +8,7 @@ import (
 type Vector = fraudindex.Vector
 
 type Vectorizer struct {
-	mccRisk frauddata.MCCRisk
+	mccRisk *frauddata.MCCRisk
 
 	invMaxAmount            float64
 	invMaxInstallments      float64
@@ -62,7 +62,7 @@ func (v Vectorizer) Vectorize(request FraudScoreRequest) Vector {
 		boolFloat(request.Terminal.IsOnline),
 		boolFloat(request.Terminal.CardPresent),
 		boolFloat(!knownMerchant(request.Merchant.ID, request.Customer.KnownMerchants)),
-		float32(v.mccRisk.For(request.Merchant.MCC)),
+		v.mccRisk.For(request.Merchant.MCC),
 		float32(Clamp(request.Merchant.AvgAmount*v.invMaxMerchantAvgAmount, 0, 1)),
 	}
 

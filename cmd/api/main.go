@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +23,9 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
+	runtime.GOMAXPROCS(1)
+	applyGCMode()
+
 	profiling.StartDebugListener()
 
 	addr := env("HTTP_ADDR", ":8080")
@@ -30,9 +35,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	handler := httpapi.NewHandler()
+	debug.FreeOSMemory()
+
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       2 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -77,6 +85,15 @@ func env(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func applyGCMode() {
+	switch os.Getenv("GC_MODE") {
+	case "off":
+		debug.SetGCPercent(-1)
+	case "high":
+		debug.SetGCPercent(1000)
+	}
 }
 
 func listen(addr string) (net.Listener, error) {

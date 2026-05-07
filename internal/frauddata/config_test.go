@@ -37,13 +37,19 @@ func TestLoadMCCRisk(t *testing.T) {
 		t.Fatalf("LoadMCCRisk failed: %v", err)
 	}
 
-	if got := risk.For("5411"); got != 0.15 {
+	if got := risk.For("5411"); got != float32(0.15) {
 		t.Fatalf("risk.For(5411) = %v, want 0.15", got)
 	}
-	if got := risk.For("7995"); got != 0.85 {
+	if got := risk.For("7995"); got != float32(0.85) {
 		t.Fatalf("risk.For(7995) = %v, want 0.85", got)
 	}
-	if got := risk.For("0000"); got != 0.5 {
+	if got := risk.For("0000"); got != float32(0.5) {
 		t.Fatalf("risk.For(0000) = %v, want 0.5", got)
+	}
+	if got := risk.For("abcd"); got != float32(0.5) {
+		t.Fatalf("risk.For(abcd) = %v, want 0.5 (parse fail fallback)", got)
+	}
+	if got := risk.For("12345"); got != float32(0.5) {
+		t.Fatalf("risk.For(12345) = %v, want 0.5 (out of range fallback)", got)
 	}
 }
