@@ -1,0 +1,75 @@
+services:
+  haproxy:
+    image: haproxy:2.9-alpine
+    platform: linux/amd64
+    container_name: rinha-haproxy
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./deploy/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
+    depends_on:
+      - api1
+      - api2
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: "24MB"
+
+  api1:
+    image: greg0x46/rinha-be-2026-api:v0.1.0
+    platform: linux/amd64
+    hostname: api1
+    environment:
+      HTTP_ADDR: "unix:/sockets/api1.sock"
+      REFERENCES_PATH: "/app/data/references.bin"
+      IVF_NPROBE: "4"
+      IVF_BOUNDARY_RETRY: "off"
+      KMEANS_QUICK_PROBE: "2"
+      KMEANS_EXPANDED_PROBE: "8"
+      GOMEMLIMIT: "112MiB"
+      GOGC: "50"
+      GOMAXPROCS: "1"
+    volumes:
+      - sockets:/sockets
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "128MB"
+
+  api2:
+    image: greg0x46/rinha-be-2026-api:v0.1.0
+    platform: linux/amd64
+    hostname: api2
+    environment:
+      HTTP_ADDR: "unix:/sockets/api2.sock"
+      REFERENCES_PATH: "/app/data/references.bin"
+      IVF_NPROBE: "4"
+      IVF_BOUNDARY_RETRY: "off"
+      KMEANS_QUICK_PROBE: "2"
+      KMEANS_EXPANDED_PROBE: "8"
+      GOMEMLIMIT: "112MiB"
+      GOGC: "50"
+      GOMAXPROCS: "1"
+    volumes:
+      - sockets:/sockets
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "128MB"
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  sockets:
