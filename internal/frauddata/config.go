@@ -64,6 +64,23 @@ func (r *MCCRisk) For(mcc string) float32 {
 	return r.table[idx]
 }
 
+// ForBytes is the byte-slice equivalent of For. It avoids the implicit
+// allocation of string(slice) on the hot path.
+func (r *MCCRisk) ForBytes(mcc []byte) float32 {
+	if len(mcc) == 0 || len(mcc) > 4 {
+		return mccDefaultRisk
+	}
+	n := 0
+	for i := 0; i < len(mcc); i++ {
+		c := mcc[i]
+		if c < '0' || c > '9' {
+			return mccDefaultRisk
+		}
+		n = n*10 + int(c-'0')
+	}
+	return r.table[n]
+}
+
 func parseMCC(s string) (int, bool) {
 	if len(s) == 0 || len(s) > 4 {
 		return 0, false

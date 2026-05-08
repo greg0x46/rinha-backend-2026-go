@@ -2,7 +2,6 @@ services:
   haproxy:
     image: haproxy:2.9-alpine
     platform: linux/amd64
-    container_name: rinha-haproxy
     ports:
       - "9999:9999"
     volumes:

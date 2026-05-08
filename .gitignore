@@ -15,3 +15,4 @@
 # Environment
 .env
 /docs
+.claude

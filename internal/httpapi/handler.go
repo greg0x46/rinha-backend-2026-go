@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/greg/rinha-be-2026/internal/fastjson"
 	"github.com/greg/rinha-be-2026/internal/metrics"
 )
 
@@ -16,6 +17,14 @@ const defaultReferencesPath = "/app/data/references.bin"
 
 var requestPool = sync.Pool{
 	New: func() any { return &FraudScoreRequest{} },
+}
+
+var payloadPool = sync.Pool{
+	New: func() any {
+		p := &fastjson.Payload{}
+		p.KnownMerchants = make([][]byte, 0, 16)
+		return p
+	},
 }
 
 var bodyBufPool = sync.Pool{
@@ -104,12 +113,6 @@ func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	buf.Reset()
 	defer bodyBufPool.Put(buf)
 
-	payload := requestPool.Get().(*FraudScoreRequest)
-	defer func() {
-		*payload = FraudScoreRequest{}
-		requestPool.Put(payload)
-	}()
-
 	t := metrics.Now()
 	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxRequestBodyBytes)); err != nil {
 		writeFraudScore(w, fallbackResponse)
@@ -117,13 +120,31 @@ func (h Handler) fraudScore(w http.ResponseWriter, r *http.Request) {
 	}
 	t = metrics.Since(t, metrics.StageReadBody)
 
-	if err := json.Unmarshal(buf.Bytes(), payload); err != nil {
-		writeFraudScore(w, fallbackResponse)
-		return
-	}
-	t = metrics.Since(t, metrics.StageDecode)
+	body := buf.Bytes()
 
-	vector := h.vectorizer.Vectorize(*payload)
+	p := payloadPool.Get().(*fastjson.Payload)
+	defer func() {
+		p.Reset()
+		payloadPool.Put(p)
+	}()
+
+	var vector Vector
+	if err := fastjson.Parse(body, p); err == nil && p.HasRequestedAt {
+		t = metrics.Since(t, metrics.StageDecode)
+		vector = h.vectorizer.VectorizeFromPayload(p)
+	} else {
+		req := requestPool.Get().(*FraudScoreRequest)
+		defer func() {
+			*req = FraudScoreRequest{}
+			requestPool.Put(req)
+		}()
+		if err := json.Unmarshal(body, req); err != nil {
+			writeFraudScore(w, fallbackResponse)
+			return
+		}
+		t = metrics.Since(t, metrics.StageDecode)
+		vector = h.vectorizer.Vectorize(*req)
+	}
 	t = metrics.Since(t, metrics.StageVectorize)
 
 	frauds := h.scorer.Frauds(vector)
