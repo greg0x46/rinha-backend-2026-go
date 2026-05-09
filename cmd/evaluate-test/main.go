@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/greg/rinha-be-2026/internal/fraudindex"
@@ -71,7 +74,22 @@ func main() {
 	skipExact := flag.Bool("skip-exact", false, "skip exact comparison entirely")
 	timeIVF := flag.Bool("time-ivf", true, "measure IVF score time")
 	timeExact := flag.Bool("time-exact", false, "measure exact score time (slow)")
+	sweepQuick := flag.String("sweep-quick", "", "comma-separated kmeans-quick-probe values (enables sweep mode; implies --skip-exact)")
+	sweepExpanded := flag.String("sweep-expanded", "", "comma-separated kmeans-expanded-probe values (required with --sweep-quick)")
 	flag.Parse()
+
+	if *sweepQuick != "" || *sweepExpanded != "" {
+		quicks, err := parseIntList(*sweepQuick)
+		if err != nil || len(quicks) == 0 {
+			log.Fatalf("invalid --sweep-quick %q: %v", *sweepQuick, err)
+		}
+		expandeds, err := parseIntList(*sweepExpanded)
+		if err != nil || len(expandeds) == 0 {
+			log.Fatalf("invalid --sweep-expanded %q: %v", *sweepExpanded, err)
+		}
+		runSweep(*ivfPath, *testPath, *limit, quicks, expandeds)
+		return
+	}
 
 	vectorizer, err := httpapi.NewVectorizer()
 	if err != nil {
@@ -190,6 +208,115 @@ func main() {
 		fmt.Printf("  both wrong (different way): %d\n", disagreeBothWrong)
 	}
 }
+
+// runSweep evaluates a matrix of (quick, expanded) probe combinations on
+// the same loaded index. Output is one row per combination with FP/FN/E,
+// failure rate, weighted-error projection, and avg score time.
+func runSweep(ivfPath, testPath string, limit int, quicks, expandeds []int) {
+	vectorizer, err := httpapi.NewVectorizer()
+	if err != nil {
+		log.Fatalf("vectorizer: %v", err)
+	}
+	t0 := time.Now()
+	scorer, manifest, kind, err := loadCandidateScorer(ivfPath)
+	if err != nil {
+		log.Fatalf("load index: %v", err)
+	}
+	fmt.Printf("%s index: %d refs, %d lists, loaded in %s\n",
+		kind, manifest.References, manifest.NList, time.Since(t0).Round(time.Millisecond))
+
+	t0 = time.Now()
+	f, err := os.Open(testPath)
+	if err != nil {
+		log.Fatalf("open test data: %v", err)
+	}
+	var tf testFile
+	if err := json.NewDecoder(f).Decode(&tf); err != nil {
+		log.Fatalf("decode test data: %v", err)
+	}
+	_ = f.Close()
+	entries := tf.Entries
+	if limit > 0 && limit < len(entries) {
+		entries = entries[:limit]
+	}
+	fmt.Printf("test entries: %d (loaded in %s)\n", len(entries), time.Since(t0).Round(time.Millisecond))
+
+	// Pre-vectorize once so each cell only times the score path.
+	vectors := make([]httpapi.Vector, len(entries))
+	for i, e := range entries {
+		vectors[i] = vectorizer.Vectorize(e.Request)
+	}
+
+	fmt.Println()
+	fmt.Printf("%-6s %-9s %-7s %-7s %-5s %-9s %-12s %-9s %-12s\n",
+		"quick", "expanded", "FP", "FN", "E", "fail%", "score_avg", "rate_E", "final_proj")
+	for _, q := range quicks {
+		for _, e := range expandeds {
+			httpapi.SetKMeansProbes(q, e)
+			var s stat
+			start := time.Now()
+			for i, entry := range entries {
+				resp := scorer.Score(vectors[i])
+				s.record(resp.Approved, resp.FraudScore, entry.ExpectedApproved, entry.ExpectedFraudScore)
+			}
+			s.totalScoreTime = time.Since(start)
+			eWeighted := s.fp*1 + s.fn*3
+			fmt.Printf("%-6d %-9d %-7d %-7d %-5d %-9.4f %-12s %-9d %-12s\n",
+				q, e, s.fp, s.fn, eWeighted,
+				100*s.failureRate(),
+				(s.totalScoreTime / time.Duration(s.total())).Round(time.Microsecond),
+				eWeighted,
+				projectedScore(s.fp, s.fn, s.total()))
+		}
+	}
+}
+
+func parseIntList(s string) ([]int, error) {
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+// projectedScore returns a string with the detection-component projection
+// for the sweep table. Latency is not measured here, so we only report the
+// detection slice (rate component minus E penalty), which is the part the
+// sweep can actually move.
+func projectedScore(fp, fn, n int) string {
+	const K = 1000.0
+	const beta = 300.0
+	const epsMin = 0.001
+	const cap = 3000.0
+	if n == 0 {
+		return "n/a"
+	}
+	E := float64(fp + 3*fn)
+	eps := E / float64(n)
+	if eps < epsMin {
+		eps = epsMin
+	}
+	rate := K * log10(1/eps)
+	if rate > cap {
+		rate = cap
+	}
+	penalty := -beta * log10(1+E)
+	return fmt.Sprintf("%.1f", rate+penalty)
+}
+
+func log10(x float64) float64 { return math.Log10(x) }
 
 func loadCandidateScorer(path string) (httpapi.Scorer, fraudindex.Manifest, string, error) {
 	kmeansIndex, kmeansManifest, err := fraudindex.LoadKMeansIVFBinary(path)

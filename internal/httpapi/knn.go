@@ -21,6 +21,18 @@ var ivfBoundaryRetry = os.Getenv("IVF_BOUNDARY_RETRY") != "off"
 var kmeansQuickProbe = envInt("KMEANS_QUICK_PROBE", defaultKMeansQuickProbe)
 var kmeansExpandedProbe = envInt("KMEANS_EXPANDED_PROBE", defaultKMeansExpandedProbe)
 
+// SetKMeansProbes overrides the package-level probe knobs at runtime.
+// Intended for offline sweeps (cmd/evaluate-test); production code should
+// configure via env vars instead.
+func SetKMeansProbes(quick, expanded int) {
+	if quick > 0 {
+		kmeansQuickProbe = quick
+	}
+	if expanded > 0 {
+		kmeansExpandedProbe = expanded
+	}
+}
+
 // maxIVFNProbe is the largest nprobe ever used by Score; the scratch arrays
 // for centroid selection are sized to it so the hot path never allocates.
 const maxIVFNProbe = 256
@@ -343,31 +355,71 @@ func (s Scorer) nearestKMeansIVF(query Vector, nprobe int) [nearestNeighbors]qua
 	return best
 }
 
-// updateTop5FromBlock computes squared distances between the query and the
-// validLanes (1..KMeansBlockSize) reference vectors packed at blockIdx in
-// the SoA layout, then merges them into best. Padding lanes (above
-// validLanes in a tail block) are skipped. The broadcasted query is
-// expected to have each dim replicated across KMeansBlockSize lanes so the
-// SIMD-friendly kernel can MOVOU 16 bytes per dim.
+// pruneChunks splits the 14-dim distance into three SIMD-sized chunks. The
+// scan computes each chunk in turn and bails out the moment all valid lanes
+// already exceed the current top-5 worst — the structural insight from
+// the rinha-2026 baseline analysis. With high probe counts (quick>=4) the
+// scan visits many more blocks but most reject in the first chunk, so the
+// average per-request score time stays bounded.
+var pruneChunks = [...]struct{ start, count int }{
+	{0, 4}, {4, 4}, {8, 6},
+}
+
+// updateTop5FromBlock computes per-lane squared distances for the
+// validLanes (1..KMeansBlockSize) reference vectors packed at blockIdx
+// and merges them into best. Distance is built up in three chunks; after
+// each chunk the current min(partial) is compared against the worst slot
+// in best, and the rest of the block is skipped if every lane is already
+// non-improving.
 func updateTop5FromBlock(best *[nearestNeighbors]quantizedNeighbor, query *[fraudindex.KMeansBlockStride]int16, blocks []int16, blockIdx uint32, validLanes int) {
 	base := int(blockIdx) * fraudindex.KMeansBlockStride
 	blockPtr := (*[fraudindex.KMeansBlockStride]int16)(blocks[base : base+fraudindex.KMeansBlockStride])
-	var dist [fraudindex.KMeansBlockSize]uint64
-	fraudindex.BlockSquaredDistance(query, blockPtr, &dist)
+
+	worst := 0
+	for j := 1; j < len(best); j++ {
+		if best[j].distance > best[worst].distance {
+			worst = j
+		}
+	}
+	worstDist := best[worst].distance
+
+	var partial [fraudindex.KMeansBlockSize]uint64
+	for ci, chunk := range pruneChunks {
+		fraudindex.BlockSquaredDistancePartial(query, blockPtr, chunk.start, chunk.count, &partial)
+		if ci == len(pruneChunks)-1 {
+			break
+		}
+		// Find the smallest partial across the valid lanes — if even the
+		// best-so-far lane already exceeds worstDist, no lane can win
+		// the remaining 14-d-start dims and the block is dead.
+		minPartial := uint64(math.MaxUint64)
+		for l := 0; l < validLanes; l++ {
+			if partial[l] < minPartial {
+				minPartial = partial[l]
+			}
+		}
+		if minPartial >= worstDist {
+			return
+		}
+	}
+
 	for l := 0; l < validLanes; l++ {
-		d := dist[l]
-		worst := 0
+		d := partial[l]
+		if d >= worstDist {
+			continue
+		}
+		best[worst] = quantizedNeighbor{
+			index:    int(blockIdx)*fraudindex.KMeansBlockSize + l,
+			distance: d,
+		}
+		// Recompute worst slot after each insertion.
+		worst = 0
 		for j := 1; j < len(best); j++ {
 			if best[j].distance > best[worst].distance {
 				worst = j
 			}
 		}
-		if d < best[worst].distance {
-			best[worst] = quantizedNeighbor{
-				index:    int(blockIdx)*fraudindex.KMeansBlockSize + l,
-				distance: d,
-			}
-		}
+		worstDist = best[worst].distance
 	}
 }
 
