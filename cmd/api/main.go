@@ -29,14 +29,14 @@ func main() {
 	profiling.StartDebugListener()
 
 	addr := env("HTTP_ADDR", ":8080")
+	handler := httpapi.NewHandler()
+	debug.FreeOSMemory()
+
 	listener, err := listen(addr)
 	if err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
 		os.Exit(1)
 	}
-
-	handler := httpapi.NewHandler()
-	debug.FreeOSMemory()
 
 	server := &http.Server{
 		Addr:              addr,
