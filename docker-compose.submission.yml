@@ -29,7 +29,7 @@ services:
       IVF_BOUNDARY_RETRY: "off"
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
-      GOMEMLIMIT: "112MiB"
+      GOMEMLIMIT: "144MiB"
       GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
@@ -40,7 +40,7 @@ services:
       resources:
         limits:
           cpus: "0.425"
-          memory: "128MB"
+          memory: "160MB"
 
   api2:
     image: greg0x46/rinha-be-2026-api:v0.1.0
@@ -53,7 +53,7 @@ services:
       IVF_BOUNDARY_RETRY: "off"
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
-      GOMEMLIMIT: "112MiB"
+      GOMEMLIMIT: "144MiB"
       GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
@@ -64,7 +64,7 @@ services:
       resources:
         limits:
           cpus: "0.425"
-          memory: "128MB"
+          memory: "160MB"
 
 networks:
   backend:
