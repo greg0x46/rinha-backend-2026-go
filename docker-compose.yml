@@ -16,8 +16,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: "24MB"
+          cpus: "0.15"
+          memory: "30MB"
 
   api1:
     image: greg0x46/rinha-be-2026-api:v0.1.0
@@ -31,7 +31,7 @@ services:
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
       GOMEMLIMIT: "112MiB"
-      GOGC: "50"
+      GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
       - sockets:/sockets
@@ -40,7 +40,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.475"
+          cpus: "0.425"
           memory: "128MB"
 
   api2:
@@ -55,7 +55,7 @@ services:
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
       GOMEMLIMIT: "112MiB"
-      GOGC: "50"
+      GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
       - sockets:/sockets
@@ -64,7 +64,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.475"
+          cpus: "0.425"
           memory: "128MB"
 
 networks:
