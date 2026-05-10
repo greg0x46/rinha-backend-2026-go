@@ -109,6 +109,33 @@ Resultado A/B:
 | Proxy HTTP + UDS | `2001.85ms` | `2192` | `-3730.73` |
 | HAProxy TCP + UDS | `679.90ms` | `0` | `430.80` |
 
+### CPU split entre LB e APIs
+
+A configuracao inicial dava `0.05` para o LB e `0.475` para cada API (total
+`1.0`). Sob carga, `cpu.stat` mostrou `api1` com `11.5%` do wall clock em
+`throttling` (eventos medios de `134ms`), enquanto `api2` ficava em `0.8%`. O
+`Recv-Q` do UDS sempre vazio refutou accept queue como causa: o gargalo era
+`cpu_throttling` puro, e o desbalanceamento entre as APIs era artefato do LB
+sem folga, nao da topologia `mode tcp` em si.
+
+Um sweep de `LB cpus` mantendo total `1.0`, com mesma imagem e mesmo
+`haproxy.cfg`, trocou o regime:
+
+| LB / API cada | p99 mediana | final_score mediano | spread (stdev) |
+| --- | ---: | ---: | ---: |
+| `0.05 / 0.475` | `586.66ms` | `3088.48` | n=1 |
+| `0.06 / 0.47` | `~380ms` | `~3275` | `~12` |
+| `0.08 / 0.46` | `156.65ms` | `3661.93` | `~397` |
+| `0.10 / 0.45` | `87.45ms` | `3915.12` | `~43` |
+| `0.12 / 0.44` | `68.78ms` | `4019.39` | `~31` |
+| `0.15 / 0.425` | `30.89ms` | `4367.10` | `~41` (5 amostras) |
+| `0.2 / 0.4` | `26.51ms` | `4433.38` | `~712` |
+
+A escolha promovida foi `LB 0.15 / APIs 0.425`: variancia colapsa (stdev p99
+`~3ms`), p99 cai uma ordem de grandeza e ainda sobra cota nas APIs. Em
+`LB 0.2 / APIs 0.4` a media e ligeiramente maior, mas a cota das APIs fica
+no fio e a variancia dispara.
+
 ### Parser manual
 
 `encoding/json` era correto, mas alocava em todo request. O parser manual cobre
@@ -124,12 +151,12 @@ Microbench:
 
 ## Resultados
 
-Rodada final de referencia, com 5 amostras:
+Rodada final de referencia, com 5 amostras (`LB 0.15 / APIs 0.425`):
 
 | Metrica | min | mediana | media | max | stdev |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| p99 | `569.04ms` | `596.91ms` | `587.50ms` | `601.27ms` | `15.6ms` |
-| final_score | `3077.80` | `3080.96` | `3087.99` | `3101.72` | `11.4` |
+| p99 | `27.66ms` | `30.89ms` | `31.41ms` | `35.73ms` | `2.99ms` |
+| final_score | `4303.80` | `4367.10` | `4361.33` | `4414.94` | `40.95` |
 | http_errors | `0` | `0` | `0` | `0` | - |
 
 Resumo da evolucao:
@@ -141,6 +168,7 @@ Resumo da evolucao:
 | IVF inicial | custo de busca | p50 `2154ms -> 2ms` em carga curta |
 | HAProxy TCP + UDS | gargalo de transporte | `2192 -> 0` erros HTTP |
 | K-means + pruning | qualidade sem estourar p99 | `FP=2`, `FN=0`, p99 mediana `596.91ms` |
+| Re-split de CPU LB/APIs | throttling oculto do LB | p99 `597ms -> 31ms`, final `+1287` |
 
 ## Aprendizados
 
@@ -154,14 +182,21 @@ Resumo da evolucao:
   tuning de runtime so faz sentido medido na topologia completa.
 - SIMD precisa ser validado fim a fim. SSE4.1 ficou estavel; AVX2 ganhou pouco
   no microbench local e piorou no teste completo desse ambiente.
+- Distribuir CPU entre LB e APIs nao e neutro: dar `0.05` ao LB parecia
+  conservador, mas era exatamente o gargalo escondido. O re-split com mais
+  cota no LB reduziu p99 em uma ordem de grandeza sem mudar uma linha de
+  codigo.
+- Medicao de cgroup via `docker exec` em containers de cota pequena distorce
+  o que se quer medir: o proprio `cat /sys/fs/cgroup/cpu.stat` consome
+  fracao relevante da janela de `100ms`. Diagnostico ficou confiavel apenas
+  apos retirar o sampler do haproxy do circuito.
 
 ## Proximos pontos de melhoria
 
-- Reduzir throttling de CPU por container, que ainda explica parte relevante do
-  p99.
 - Investigar re-rank adicional para tentar zerar os falsos positivos restantes.
-- Reavaliar kernels vetoriais em hardware diferente.
-- Melhorar balanceamento sem perder o baixo overhead do HAProxy TCP.
+- Reavaliar kernels vetoriais em hardware diferente (AVX2 nativo).
+- Avaliar se reduzir CPU adicional do LB sem ganho marginal libera espaco
+  para outras melhorias de runtime/config.
 
 ## Como rodar
 

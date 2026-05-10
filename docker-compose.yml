@@ -13,8 +13,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: "24MB"
+          cpus: "0.15"
+          memory: "30MB"
 
   api1:
     build:
@@ -29,14 +29,14 @@ services:
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
       GOMEMLIMIT: "112MiB"
-      GOGC: "50"
+      GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
       - sockets:/sockets
     deploy:
       resources:
         limits:
-          cpus: "0.475"
+          cpus: "0.425"
           memory: "128MB"
 
   api2:
@@ -52,14 +52,14 @@ services:
       KMEANS_QUICK_PROBE: "6"
       KMEANS_EXPANDED_PROBE: "16"
       GOMEMLIMIT: "112MiB"
-      GOGC: "50"
+      GOGC: "off"
       GOMAXPROCS: "1"
     volumes:
       - sockets:/sockets
     deploy:
       resources:
         limits:
-          cpus: "0.475"
+          cpus: "0.425"
           memory: "128MB"
 
 volumes:
